@@ -2,7 +2,7 @@
 /* Mi Garaje — vehículos, papeles y mantenimientos.
    Todos los datos se guardan solo en este dispositivo (IndexedDB). */
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 /* ================= Utilidades ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -350,7 +350,7 @@ function catBreak(list) {
 const sum = (list, f = e => e.importe) => list.reduce((a, e) => a + (f(e) || 0), 0);
 
 function fuelStats(vId) {
-  const fs = D.fuels.filter(f => f.vehicleId === vId).sort((a, b) => a.km - b.km || a.fecha.localeCompare(b.fecha));
+  const fs = D.fuels.filter(f => f.vehicleId === vId && f.km && f.litros).sort((a, b) => a.km - b.km || a.fecha.localeCompare(b.fecha));
   let lastFull = null, accL = 0, accC = 0, L = 0, K = 0, C = 0; const per = {};
   for (const f of fs) {
     if (lastFull === null) { if (f.lleno !== false) lastFull = f.km; continue; }
@@ -675,25 +675,26 @@ function vtDocs0(v) {
 function vtFuel(v) {
   const fs = fuelStats(v.id);
   const list = D.fuels.filter(f => f.vehicleId === v.id);
-  let h = `<div class="btns"><button class="btn" data-a="addFuel" data-v="${v.id}">⛽ Añadir repostaje</button></div>`;
+  let h = `<div class="btns"><button class="btn" data-a="addFuel" data-v="${v.id}">⛽ Añadir repostaje</button></div>`
+    + `<div class="btns"><button class="btn ghost" data-a="bankImport">🏦 Importar cobros del banco</button></div>`;
   if (!list.length) return h + `<div class="card empty"><div class="big">⛽</div><b>Sin repostajes</b>Apunta cada repostaje con los km del cuentakilómetros. A partir del segundo depósito lleno verás el consumo real.</div>`;
   const ym = todayStr().slice(0, 7);
   const mes = sum(list.filter(f => f.fecha.startsWith(ym)), f => f.total);
   const cut = addDays(todayStr(), -365); const yr = list.filter(f => f.fecha > cut);
   const first = yr.map(f => f.fecha).sort()[0];
   const months = first ? Math.min(12, Math.max(1, Math.round(daysBetween(first, todayStr()) / 30.44) + 1)) : 1;
-  const litros = sum(list, f => f.litros), total = sum(list, f => f.total);
+  const withL = list.filter(f => f.litros); const litros = sum(withL, f => f.litros), totalL = sum(withL, f => f.total), total = sum(list, f => f.total);
   h += `<div class="stats">
     <div class="stat"><div class="l">Consumo real</div><div class="v">${fs.avg ? fNum(fs.avg, 1) + ' <small>L/100</small>' : '—'}</div><div class="d">${fs.km ? `en ${fKm(fs.km)}` : 'Necesita 2 llenos'}</div></div>
     <div class="stat"><div class="l">Coste por km</div><div class="v">${fs.costKm ? fNum(fs.costKm * 100, 1) + ' <small>cént.</small>' : '—'}</div><div class="d">${fs.costKm ? fEur(fs.costKm * 100) + ' cada 100 km' : 'Solo combustible'}</div></div>
     <div class="stat"><div class="l">Este mes</div><div class="v">${fEur0(mes)}</div><div class="d">en combustible</div></div>
     <div class="stat"><div class="l">Media mensual</div><div class="v">${fEur0(sum(yr, f => f.total) / months)}</div><div class="d">últimos ${months} ${months === 1 ? 'mes' : 'meses'}</div></div></div>`;
   h += `<div class="card"><div style="font-weight:700;margin-bottom:8px">Gasto en combustible</div>${monthChart(expenses(v.id).filter(e => e.cat === 'combustible'))}
-    <div class="muted small" style="margin-top:8px">Total: ${fNum(litros, 0)} L · ${fEur(total)} · precio medio ${litros ? fEur(total / litros, 3) : '—'}/L</div></div>`;
+    <div class="muted small" style="margin-top:8px">Total: ${fNum(litros, 0)} L · ${fEur(total)} · precio medio ${litros ? fEur(totalL / litros, 3) : '—'}/L</div></div>`;
   h += fuelCharts(v, fs);
-  const sorted = [...list].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.km - a.km);
+  const sorted = [...list].sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.km || 0) - (a.km || 0));
   h += `<h2 class="sec">Repostajes</h2><div class="card flush">${sorted.map(f => `<button class="row" data-a="editFuel" data-id="${f.id}"><div class="ico">⛽</div>
-    <div class="txt"><div class="t">${fNum(f.litros, 2)} L · ${fEur(f.total / f.litros, 3)}/L</div><div class="s">${fDate(f.fecha)} · ${fKm(f.km)}${f.gasolinera ? ' · ' + esc(f.gasolinera) : ''}${f.lleno === false ? ' · parcial' : ''}</div></div>
+    <div class="txt"><div class="t">${f.litros ? `${fNum(f.litros, 2)} L · ${fEur(f.total / f.litros, 3)}/L` : (f.banco ? 'Cobro del banco 🏦' : 'Repostaje')}</div><div class="s">${fDate(f.fecha)}${f.km ? ' · ' + fKm(f.km) : ''}${f.gasolinera ? ' · ' + esc(f.gasolinera) : ''}${f.lleno === false ? ' · parcial' : ''}${!f.litros || !f.km ? ' · <span class="link">añadir litros y km</span>' : ''}</div></div>
     <div class="end"><div style="font-weight:650">${fEur(f.total)}</div>${fs.per[f.id] ? `<div class="s muted">${fNum(fs.per[f.id], 1)} L/100</div>` : ''}</div></button>`).join('')}</div>`;
   return h;
 }
@@ -701,7 +702,7 @@ function vtFuel(v) {
 function histEvents(vId) {
   const ev = [];
   D.mtos.filter(m => m.vehicleId === vId).forEach(m => ev.push({ t: 'mto', fecha: m.fecha, km: m.km, html: mtoRow(m) }));
-  D.fuels.filter(f => f.vehicleId === vId).forEach(f => ev.push({ t: 'fuel', fecha: f.fecha, km: f.km, html: `<button class="row" data-a="editFuel" data-id="${f.id}"><div class="ico">⛽</div><div class="txt"><div class="t">Repostaje · ${fNum(f.litros, 1)} L</div><div class="s">${fDate(f.fecha)} · ${fKm(f.km)}${f.gasolinera ? ' · ' + esc(f.gasolinera) : ''}</div></div><div class="end">${fEur(f.total)}</div></button>` }));
+  D.fuels.filter(f => f.vehicleId === vId).forEach(f => ev.push({ t: 'fuel', fecha: f.fecha, km: f.km, html: `<button class="row" data-a="editFuel" data-id="${f.id}"><div class="ico">⛽</div><div class="txt"><div class="t">Repostaje${f.litros ? ' · ' + fNum(f.litros, 1) + ' L' : f.banco ? ' 🏦' : ''}</div><div class="s">${fDate(f.fecha)}${f.km ? ' · ' + fKm(f.km) : ''}${f.gasolinera ? ' · ' + esc(f.gasolinera) : ''}</div></div><div class="end">${fEur(f.total)}</div></button>` }));
   D.pagos.filter(p => p.vehicleId === vId).forEach(p => ev.push({ t: 'pago', fecha: p.fecha, html: `<button class="row" data-a="editPago" data-id="${p.id}"><div class="ico">${CATS[p.cat]?.e || '💶'}</div><div class="txt"><div class="t">${esc(p.concepto || CATS[p.cat].n)}</div><div class="s">${fDate(p.fecha)} · ${CATS[p.cat].n}</div></div><div class="end">${fEur(p.importe)}</div></button>` }));
   D.kmlog.filter(k => k.vehicleId === vId).forEach(k => ev.push({ t: 'km', fecha: k.fecha, km: k.km, html: `<button class="row" data-a="editKm" data-id="${k.id}"><div class="ico">📍</div><div class="txt"><div class="t">Km actualizados</div><div class="s">${fDate(k.fecha)}</div></div><div class="end">${fKm(k.km)}</div></button>` }));
   return ev.sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.km || 0) - (a.km || 0));
@@ -757,6 +758,9 @@ function vAjustes() {
   h += `<h2 class="sec">Calendario del iPhone</h2><div class="card">
     <p style="margin:0 0 12px" class="muted small">Añade las fechas importantes a tu Calendario, con aviso unos días antes. Son avisos del propio iPhone: llegan aunque no abras la app.</p>
     <button class="btn" data-a="calAll">📅 Añadir fechas al Calendario</button></div>`;
+  h += `<h2 class="sec">Gasolina del banco</h2><div class="card">
+    <p style="margin:0 0 12px" class="muted small">Importa los cobros de Repsol (u otra gasolinera) desde el Excel de movimientos de Santander. ${D.vehicles.length > 1 ? `Los de más de ${fEur0(bankRule().limit)} van al ${esc(vName(veh(bankRule().big)))} y el resto al ${esc(vName(veh(bankRule().small)))}.` : ''}</p>
+    <button class="btn" data-a="bankImport">🏦 Importar cobros del banco</button></div>`;
   h += `<h2 class="sec">Exportar datos</h2><div class="card">
     <p style="margin:0 0 12px" class="muted small">Tabla con todos los registros (mantenimientos, repostajes y gastos) para abrir en Excel o Numbers.</p>
     <button class="btn sec" data-a="exportCsv">Exportar registros (CSV)</button></div>`;
@@ -916,8 +920,9 @@ function formFuel(vId, id) {
     },
     onSubmit: fd => {
       const litros = num(fd.litros), total = num(fd.total), km = intKm(fd.km);
-      if (!litros || !total) { toast('Pon los litros y el precio total'); return false; }
-      if (!km) { toast('Pon los km del cuentakilómetros'); return false; }
+      if (!total) { toast('Pon el precio total'); return false; }
+      if (!f0.banco && !litros) { toast('Pon los litros'); return false; }
+      if (!f0.banco && !km) { toast('Pon los km del cuentakilómetros'); return false; }
       const o = id ? f0 : { id: uid() };
       Object.assign(o, { vehicleId: fd.vehicleId, litros, total, km, fecha: fd.fecha || todayStr(), gasolinera: fd.gasolinera, lleno: !!fd.lleno });
       if (!id) D.fuels.push(o);
@@ -1083,6 +1088,182 @@ function pickPhoto() {
   });
 }
 async function showPhoto(id) { const p = await getPhoto(id); if (!p) return; const v = $('#viewer'); v.innerHTML = `<img src="${p}">`; v.classList.add('open'); }
+
+
+/* ================= Importar cobros del banco ================= */
+let xlsxLoading = null;
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve();
+  return xlsxLoading || (xlsxLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = res; sc.onerror = () => { xlsxLoading = null; sc.remove(); rej(new Error('Para leer el Excel hace falta conexión a internet.')); };
+    document.head.append(sc);
+  }));
+}
+function cellDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return toStr(v);
+  if (typeof v === 'number') {
+    if (v < 20000 || v > 80000) return null;
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000);
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
+  const t = String(v).trim(); let m;
+  if ((m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))) { let y = +m[3]; if (y < 100) y += 2000; if (+m[2] > 12) return null; return `${y}-${pad(+m[2])}-${pad(+m[1])}`; }
+  if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`;
+  return null;
+}
+function cellNum(v) {
+  if (typeof v === 'number') return v;
+  if (v == null) return null;
+  const t = String(v).trim(); if (!/^[+\-−]?\s*[\d.,]+\s*(€|eur)?$/i.test(t)) return null;
+  return num(t.replace('−', '-').replace(/\s|€|eur/gi, ''));
+}
+const isText = c => typeof c === 'string' && /[a-záéíóúñ]{3,}/i.test(c);
+function parseBank(rows) {
+  rows = rows.map(r => (r || []).map(c => c == null ? '' : c));
+  let hi = -1, cD = -1, cC = -1, cA = -1, cCargo = -1, cAbono = -1;
+  for (let i = 0; i < Math.min(rows.length, 60); i++) {
+    const r = rows[i].map(c => String(c).toLowerCase().trim());
+    let d = r.findIndex(c => /^fecha/.test(c) && !/valor/.test(c)); if (d < 0) d = r.findIndex(c => /fecha/.test(c));
+    const a = r.findIndex(c => /^importe|^cantidad/.test(c));
+    const cg = r.findIndex(c => /^cargo|^debe/.test(c));
+    if (d >= 0 && (a >= 0 || cg >= 0)) {
+      hi = i; cD = d; cA = a; cCargo = cg; cAbono = r.findIndex(c => /^abono|^haber/.test(c));
+      cC = r.findIndex(c => /concepto|descrip|movimiento|detalle|comercio/.test(c)); break;
+    }
+  }
+  const out = [];
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i]; let fecha, concepto, imp;
+    if (hi >= 0) {
+      fecha = cellDate(r[cD]);
+      concepto = cC >= 0 ? String(r[cC]) : (r.filter(isText).sort((a, b) => b.length - a.length)[0] || '');
+      if (cA >= 0) imp = cellNum(r[cA]);
+      else { const cg = cellNum(r[cCargo]), ab = cAbono >= 0 ? cellNum(r[cAbono]) : null; imp = cg ? -Math.abs(cg) : ab; }
+    } else {
+      fecha = r.map(cellDate).find(Boolean);
+      concepto = r.filter(isText).sort((a, b) => b.length - a.length)[0] || '';
+      const ci = r.indexOf(concepto); imp = r.slice(ci + 1).map(cellNum).find(x => x != null);
+    }
+    concepto = String(concepto || '').trim().replace(/\s+/g, ' ');
+    if (fecha && imp != null && imp !== 0 && concepto) out.push({ fecha, concepto, importe: imp });
+  }
+  return out;
+}
+function parseCsv(t) {
+  const lines = t.split(/\r?\n/).filter(l => l.trim());
+  const sample = lines.slice(0, 30).join('\n');
+  const d = [';', '\t', ','].sort((a, b) => sample.split(b).length - sample.split(a).length)[0];
+  return lines.map(l => {
+    const out = []; let cur = '', q = false;
+    for (let i = 0; i < l.length; i++) {
+      const ch = l[i];
+      if (q) { if (ch === '"') { if (l[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else if (ch === '"') q = true; else if (ch === d) { out.push(cur.trim()); cur = ''; } else cur += ch;
+    }
+    out.push(cur.trim()); return out;
+  });
+}
+async function readBankFile(file) {
+  const buf = await file.arrayBuffer(); let out = [];
+  if (/\.(csv|txt)$/i.test(file.name)) {
+    let txt; try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { txt = new TextDecoder('windows-1252').decode(buf); }
+    out = parseBank(parseCsv(txt));
+  } else {
+    await loadXLSX();
+    const wb = XLSX.read(buf, { type: 'array' });
+    for (const n of wb.SheetNames) out.push(...parseBank(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' })));
+  }
+  if (!out.length) throw new Error('No he encontrado movimientos en el archivo. ¿Es el Excel de movimientos del banco?');
+  return out;
+}
+function stationName(c, kw) {
+  let t = c; const i = t.toLowerCase().indexOf(kw); if (i > 0) t = t.slice(i);
+  t = t.replace(/\s\d{4,}.*$/, '').replace(/\s(fecha|tarj|tarjeta)\b.*$/i, '').trim();
+  t = t.toLowerCase().replace(/(^|[\s.])\S/g, x => x.toUpperCase());
+  return t.slice(0, 40) || kw;
+}
+function bankRule() {
+  const r = D.settings.bankRule || {};
+  const motos = D.vehicles.filter(v => v.tipo === 'moto'), otros = D.vehicles.filter(v => v.tipo !== 'moto');
+  const big = veh(r.big) ? r.big : (otros[0] || D.vehicles[0])?.id;
+  const small = veh(r.small) ? r.small : (motos[0] || D.vehicles[D.vehicles.length - 1])?.id;
+  return { limit: r.limit ?? 40, big, small };
+}
+function bankRows(form) {
+  const kwRaw = ($('input[name=kw]', form).value || 'repsol').toLowerCase();
+  const kws = kwRaw.split(/[,;]/).map(x => x.trim()).filter(Boolean);
+  let m = form._all.filter(r => kws.some(k => r.concepto.toLowerCase().includes(k)));
+  const neg = m.filter(r => r.importe < 0); m = neg.length ? neg : m;
+  const lim = num($('input[name=limit]', form)?.value) ?? 40;
+  const big = $('select[name=big]', form)?.value, small = $('select[name=small]', form)?.value;
+  const seen = {};
+  return m.sort((a, b) => b.fecha.localeCompare(a.fecha)).map(r => {
+    const total = Math.round(Math.abs(r.importe) * 100) / 100;
+    const base = `${r.fecha}|${total.toFixed(2)}|${r.concepto.toLowerCase()}`; seen[base] = (seen[base] || 0) + 1;
+    const key = seen[base] > 1 ? `${base}|${seen[base]}` : base;
+    const kw = kws.find(k => r.concepto.toLowerCase().includes(k));
+    let dup = '';
+    if (D.fuels.some(f => f.banco === key)) dup = 'ya importado';
+    else if (D.fuels.some(f => !f.banco && Math.abs((f.total || 0) - total) < .015 && Math.abs(daysBetween(f.fecha, r.fecha)) <= 3)) dup = 'ya apuntado a mano';
+    const shop = !dup && (total < 5 || /tienda|shop/i.test(r.concepto));
+    return { ...r, total, key, dup, shop, station: stationName(r.concepto, kw), vehicleId: D.vehicles.length > 1 ? (total > lim ? big : small) : D.vehicles[0]?.id };
+  });
+}
+function renderBankPreview(form) {
+  const box = $('#bankPreview', form); if (!form._all) return;
+  const rows = form._rows = bankRows(form);
+  const kw = $('input[name=kw]', form).value || 'repsol';
+  if (!rows.length) { box.innerHTML = `<div class="card empty" style="margin:0 0 12px">No hay cobros con «${esc(kw)}» entre los ${form._all.length} movimientos del archivo.</div>`; return; }
+  const multi = D.vehicles.length > 1;
+  const nNew = rows.filter(r => !r.dup).length;
+  box.innerHTML = `<div class="hint">${rows.length} cobros encontrados${nNew < rows.length ? `, ${rows.length - nNew} ya estaban en la app (desmarcados)` : ''}. Desmarca los que no sean de combustible, por ejemplo compras en la tienda.</div>
+    <div class="card flush" style="margin:0 0 12px">${rows.map((r, i) => `<div class="row bankrow"><input type="checkbox" name="imp_${i}" ${r.dup || r.shop ? '' : 'checked'}>
+      <div class="txt"><div class="t">${fEur(r.total)} <span class="muted" style="font-weight:500">· ${fDate(r.fecha)}</span></div><div class="s">${esc(r.station)}${r.dup ? ` · <span class="st yellow">${r.dup}</span>` : r.shop ? ' · <span class="st yellow">¿compra en la tienda?</span>' : ''}</div></div>
+      ${multi ? `<select name="veh_${i}" class="vsel">${D.vehicles.map(v => `<option value="${v.id}" ${v.id === r.vehicleId ? 'selected' : ''}>${vEmoji(v)}</option>`).join('')}</select>` : ''}</div>`).join('')}</div>`;
+}
+function formBank() {
+  if (!D.vehicles.length) { toast('Primero añade un vehículo'); return; }
+  const r = bankRule(); const multi = D.vehicles.length > 1;
+  const opts = D.vehicles.map(v => [v.id, `${vEmoji(v)} ${vName(v)}`]);
+  const body = `<div class="hint" style="margin:0 4px 12px"><b>Cómo sacar el archivo de Santander:</b> en la web de Santander (mejor desde el ordenador o en Safari), entra en tu cuenta → <b>Movimientos</b>, elige las fechas y pulsa <b>Descargar / Exportar en Excel</b>. Si pagas con tarjeta de crédito, los cobros salen en los movimientos de la <b>tarjeta</b>, no en los de la cuenta. Guarda el archivo en Archivos o en iCloud Drive.</div>`
+    + `<label class="photo-in"><input type="file" name="bankfile" accept=".xlsx,.xls,.csv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden><div class="photo-prev" id="bankName">📄 Elegir el archivo del banco</div></label><div style="height:12px"></div>`
+    + F.text('kw', 'Buscar en el concepto', D.settings.bankKw || 'repsol', 'autocapitalize="off"')
+    + F.hint('Puedes poner varias separadas por comas, por ejemplo: repsol, cepsa')
+    + (multi ? `<div class="f"><span class="lbl">Asignar cada cobro automáticamente</span></div>`
+      + F.row(F.num('limit', 'Si es más de (€)', r.limit), F.select('big', 'va a', opts, r.big))
+      + F.select('small', 'Si es igual o menos, va a', opts, r.small)
+      + F.hint('Puedes cambiar el vehículo de cada cobro en la lista.') : '')
+    + `<div id="bankPreview"></div>`
+    + F.hint('Del banco solo llegan la fecha y el importe: cuentan como gasto en combustible. Para el consumo, toca el repostaje después y añade los litros y los km.');
+  openSheet({
+    body, title: 'Importar del banco', submit: 'Importar',
+    onRender: f => {
+      const inp = $('input[name=bankfile]', f);
+      inp.addEventListener('change', async () => {
+        const file = inp.files[0]; if (!file) return;
+        $('#bankName', f).textContent = '📄 ' + file.name;
+        const box = $('#bankPreview', f); box.innerHTML = '<div class="hint">Leyendo el archivo…</div>';
+        try { f._all = await readBankFile(file); renderBankPreview(f); }
+        catch (e) { f._all = null; box.innerHTML = `<div class="hint" style="color:var(--red)">${esc(e.message)}</div>`; }
+      });
+      $$('input[name=kw], input[name=limit]', f).forEach(i => i.addEventListener('input', () => renderBankPreview(f)));
+      $$('select[name=big], select[name=small]', f).forEach(i => i.addEventListener('change', () => renderBankPreview(f)));
+    },
+    onSubmit: (fd, form) => {
+      if (!form._rows) { toast('Elige primero el archivo del banco'); return false; }
+      const pick = form._rows.map((r, i) => ({ ...r, vehicleId: fd['veh_' + i] || r.vehicleId, on: !!fd['imp_' + i] })).filter(r => r.on);
+      if (!pick.length) { toast('No hay ningún cobro marcado'); return false; }
+      pick.forEach(r => D.fuels.push({ id: uid(), vehicleId: r.vehicleId, fecha: r.fecha, total: r.total, litros: null, km: null, gasolinera: r.station, lleno: true, banco: r.key }));
+      D.settings.bankKw = fd.kw || 'repsol';
+      if (multi) D.settings.bankRule = { limit: num(fd.limit) ?? 40, big: fd.big, small: fd.small };
+      save();
+      const per = D.vehicles.map(v => [v, pick.filter(r => r.vehicleId === v.id)]).filter(([, l]) => l.length);
+      toast(`Importados: ${per.map(([v, l]) => `${l.length} ${vName(v)}`).join(' · ')}`);
+    }
+  });
+}
 
 function openItem(kind, id) {
   if (kind === 'gar') return openGar(id);
@@ -1297,6 +1478,7 @@ const A = {
     openActions(esc(g.nombre), [{ label: '🖼️ Ver', now: true, fn: () => showPhoto(g.fotoId) }, { label: 'Eliminar', danger: true, fn: async () => { if (!confirm(`¿Eliminar la foto de «${g.nombre}»?`)) return; await delPhoto(g.fotoId); D.guantera = D.guantera.filter(x => x.id !== g.id); save(); render(); } }]);
   },
   calAll: () => formCalendar(),
+  bankImport: () => formBank(),
   exportFull: () => exportFull(),
   importFull: () => importFull(),
   exportCsv: () => exportCsv(),

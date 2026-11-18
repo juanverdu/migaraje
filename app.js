@@ -2,7 +2,7 @@
 /* Mi Garaje — vehículos, papeles y mantenimientos de casa.
    Todos los datos se guardan solo en este dispositivo (IndexedDB). */
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 
 /* ================= Utilidades ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -87,7 +87,7 @@ const idb = {
   }
 };
 
-const emptyData = () => ({ schema: 1, vehicles: [], docs: [], plans: [], mtos: [], fuels: [], pagos: [], casa: [], kmlog: [], settings: {} });
+const emptyData = () => ({ schema: 1, vehicles: [], docs: [], plans: [], mtos: [], fuels: [], pagos: [], casa: [], kmlog: [], garantias: [], guantera: [], settings: {} });
 let D = emptyData();
 function normalize(d) { const e = emptyData(); for (const k in e) if (d[k] == null) d[k] = e[k]; return d; }
 function save() { return idb.put('kv', 'data', D).catch(e => toast('No se pudo guardar: ' + e.message)); }
@@ -155,7 +155,7 @@ const CASA_SUG = [
   ['🍳', 'Cambiar filtro de la campana', 3, 'm'], ['💧', 'Cambiar filtro de agua', 6, 'm'], ['☕', 'Descalcificar cafetera', 2, 'm'],
   ['🧊', 'Limpiar la nevera', 3, 'm'], ['🚨', 'Probar detector de humo', 6, 'm'], ['🛏️', 'Dar la vuelta al colchón', 6, 'm']
 ];
-const EMOJIS = ['🏠', '🧺', '🧼', '🍽️', '🔥', '♨️', '🌬️', '💧', '🍳', '☕', '🧊', '🚨', '🛏️', '🪴', '🧹', '🔌', '💡', '🐾', '🪪', '📄', '🦷', '💊', '🔑', '🛠️'];
+const EMOJIS = ['🏠', '🛞', '🛢️', '🚗', '📺', '🧾', '🧺', '🧼', '🍽️', '🔥', '♨️', '🌬️', '💧', '🍳', '☕', '🧊', '🚨', '🛏️', '🪴', '🧹', '🔌', '💡', '🐾', '🪪', '📄', '🦷', '💊', '🔑', '🛠️'];
 function planEmoji(n) {
   n = (n || '').toLowerCase();
   const m = [['aceite', '🛢️'], ['neum', '🛞'], ['rueda', '🛞'], ['freno', '🛑'], ['bater', '🔋'], ['correa', '⚙️'], ['distrib', '⚙️'], ['refrig', '❄️'],
@@ -253,11 +253,91 @@ function casaStatus(t, ref = todayStr()) {
   return { level, days, text, short: days < 0 ? 'Atrasado' : days === 0 ? 'Hoy' : dueText(days), next, progress: 1 - days / per };
 }
 
+
+/* ---- ITV según antigüedad (turismos: 4 años, luego cada 2; desde 10 años, anual) ---- */
+function itvMonths(v, at) {
+  if (!v?.matriculacion) return 12;
+  const age = daysBetween(v.matriculacion, at) / 365.25;
+  if (v.tipo === 'moto') return 24;
+  if (v.tipo === 'furgo') return age < 6 ? 24 : age < 10 ? 12 : 6;
+  return age < 10 ? 24 : 12;
+}
+function itvNext(v) {
+  if (!v?.matriculacion) return null;
+  let d = addMonths(v.matriculacion, v.tipo === 'furgo' ? 24 : 48); const t = todayStr(); let n = 0;
+  while (d < t && n++ < 200) d = addMonths(d, itvMonths(v, d));
+  return d;
+}
+
+/* ---- Garantías ---- */
+const garEnd = g => g.fecha ? addMonths(g.fecha, Math.round((g.anios || 3) * 12)) : null;
+function garStatus(g, ref = todayStr()) {
+  const end = garEnd(g);
+  if (!end) return { level: 'none', days: 1e9, text: 'Añade la fecha de compra', short: 'Sin fecha' };
+  const days = daysBetween(ref, end);
+  if (days < 0) return { level: 'none', expired: true, days: 1e9, text: `Garantía terminada el ${fDate(end)}`, short: 'Terminada' };
+  const level = days <= 15 ? 'red' : days <= 60 ? 'yellow' : 'green';
+  return { level, days, text: `Garantía hasta el ${fDate(end)} · ${dueText(days).toLowerCase()}`, short: dueText(days), end };
+}
+
+/* ---- Revisiones rápidas del vehículo ---- */
+const VCHECKS = [['🛞', 'Presión de neumáticos', 1, 'm'], ['🛢️', 'Niveles: aceite, refrigerante y limpiaparabrisas', 1, 'm'], ['💡', 'Comprobar luces', 3, 'm']];
+function addChecks(v, data = D) {
+  VCHECKS.forEach(([e, n, c, u]) => { if (!data.casa.some(t => t.vehicleId === v.id && t.nombre === n)) data.casa.push({ id: uid(), vehicleId: v.id, emoji: e, nombre: n, cada: c, unidad: u, ultima: null, historial: [] }); });
+}
+
+/* ---- Calendario del iPhone (.ics) ---- */
+function evDoc(d) {
+  if (!d.vence) return null; const v = veh(d.vehicleId);
+  return { uid: d.id + '-' + d.vence, date: d.vence, title: `${DOC_TYPES[d.tipo].e} ${docName(d)}${v ? ' · ' + vName(v) : ''}: caduca`,
+    desc: [d.compania, d.poliza ? 'Póliza ' + d.poliza : '', d.telefono ? 'Asistencia ' + d.telefono : ''].filter(Boolean).join(' · '),
+    alarms: DOC_TYPES[d.tipo].personal ? [60, 15] : [30, 7] };
+}
+function evPlan(p) {
+  const st = planStatus(p); if (st.level === 'none') return null;
+  let date = st.nextDate;
+  if (st.kmLeft != null && st.rate) { const e = addDays(todayStr(), Math.max(0, Math.floor(st.kmLeft / st.rate))); if (!date || e < date) date = e; }
+  if (!date) return null; if (date < todayStr()) date = todayStr();
+  return { uid: p.id + '-' + date, date, title: `🔧 ${p.nombre} · ${vName(veh(p.vehicleId))}`, desc: st.text + (st.nextKm ? ` · toca a los ${fKm(st.nextKm)}` : ''), alarms: [7] };
+}
+function evCasa(t) {
+  const n = casaNext(t); if (!n) return null; const date = n < todayStr() ? todayStr() : n;
+  return { uid: t.id + '-' + date, date, title: `${t.emoji || '🏠'} ${t.nombre}${t.vehicleId ? ' · ' + vName(veh(t.vehicleId)) : ''}`, desc: freqText(t), alarms: [0] };
+}
+function evGar(g) {
+  const e = garEnd(g); if (!e || e < todayStr()) return null;
+  return { uid: g.id + '-' + e, date: e, title: `🧾 Fin de la garantía: ${g.nombre}`, desc: [g.tienda, g.fecha ? 'Comprado el ' + fDate(g.fecha) : ''].filter(Boolean).join(' · '), alarms: [30] };
+}
+function icsText(evs) {
+  const e = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  const ymd = s => s.replace(/-/g, '');
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Mi Garaje//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Mi Garaje'];
+  for (const v of evs) {
+    L.push('BEGIN:VEVENT', `UID:${v.uid}@migaraje`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${ymd(v.date)}`, `DTEND;VALUE=DATE:${ymd(addDays(v.date, 1))}`, `SUMMARY:${e(v.title)}`);
+    if (v.desc) L.push(`DESCRIPTION:${e(v.desc)}`);
+    L.push('TRANSP:TRANSPARENT');
+    for (const n of v.alarms) L.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${e(v.title)}`, n > 0 ? `TRIGGER:-P${n - 1}DT15H` : 'TRIGGER:PT9H', 'END:VALARM');
+    L.push('END:VEVENT');
+  }
+  L.push('END:VCALENDAR'); return L.join('\r\n') + '\r\n';
+}
+function addToCalendar(evs) {
+  evs = evs.filter(Boolean);
+  if (!evs.length) { toast('No hay fechas que añadir'); return; }
+  const blob = new Blob([icsText(evs)], { type: 'text/calendar;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = evs.length === 1 ? 'migaraje-aviso.ics' : 'migaraje-calendario.ics';
+  document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  toast(evs.length === 1 ? 'Abriendo el Calendario…' : `${evs.length} fechas para el Calendario`);
+}
+
 function upcoming(ref = todayStr()) {
   const it = [];
   D.docs.forEach(d => { const v = veh(d.vehicleId); it.push({ kind: 'doc', id: d.id, e: DOC_TYPES[d.tipo].e, title: docName(d), sub: d.vehicleId ? vName(v) : 'Personal', st: docStatus(d, ref) }); });
   D.plans.forEach(p => { const v = veh(p.vehicleId); if (!v) return; it.push({ kind: 'plan', id: p.id, e: planEmoji(p.nombre), title: p.nombre, sub: vName(v), st: planStatus(p, ref) }); });
-  D.casa.forEach(t => it.push({ kind: 'casa', id: t.id, e: t.emoji || '🏠', title: t.nombre, sub: 'Casa', st: casaStatus(t, ref) }));
+  D.casa.forEach(t => { if (t.vehicleId && !veh(t.vehicleId)) return; it.push({ kind: 'casa', id: t.id, e: t.emoji || '🏠', title: t.nombre, sub: t.vehicleId ? vName(veh(t.vehicleId)) : 'Casa', st: casaStatus(t, ref) }); });
+  D.garantias.forEach(g => { const st = garStatus(g, ref); if (!st.expired) it.push({ kind: 'gar', id: g.id, e: '🧾', title: 'Garantía: ' + g.nombre, sub: g.tienda || 'Casa', st }); });
   const ord = { red: 0, yellow: 1, green: 2, none: 3 };
   return it.sort((a, b) => (a.st.level === 'none') - (b.st.level === 'none') || a.st.days - b.st.days || ord[a.st.level] - ord[b.st.level]);
 }
@@ -406,6 +486,38 @@ function monthChart(list, opts = {}) {
   return `<div class="chart" id="${id}"><svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="chart-cap">Toca un mes para ver el detalle · Media: <b>${fEur0(avg)}</b>/mes</div></div>`;
 }
 
+
+function lineChart(pts, o) {
+  const W = 340, H = 130, T = 14, B = 18, L = 6, R = 6;
+  const ys = pts.map(p => p.y); let mn = Math.min(...ys), mx = Math.max(...ys);
+  if (o.avg != null) { mn = Math.min(mn, o.avg); mx = Math.max(mx, o.avg); }
+  const pd = (mx - mn) * .15 || mx * .05 || 1; mn -= pd; mx += pd;
+  const x = i => L + (pts.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (pts.length - 1));
+  const y = v => T + (H - T - B) * (1 - (v - mn) / (mx - mn));
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join('');
+  let g = `<path d="${path}L${x(pts.length - 1).toFixed(1)},${H - B}L${x(0).toFixed(1)},${H - B}Z" fill="${o.color}" opacity=".12"/>`;
+  if (o.avg != null) g += `<line class="grid" x1="0" x2="${W}" y1="${y(o.avg)}" y2="${y(o.avg)}"/><text x="${W}" y="${y(o.avg) - 4}" text-anchor="end">media ${o.fmt(o.avg)}</text>`;
+  g += `<path d="${path}" fill="none" stroke="${o.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (pts.length <= 40) g += pts.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.y)}" r="2.6" fill="${o.color}"/>`).join('');
+  const last = pts[pts.length - 1];
+  g += `<text x="${L}" y="${H - 4}">${fDate(pts[0].d)}</text><text x="${W - R}" y="${H - 4}" text-anchor="end">${fDate(last.d)}</text>`;
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="chart-cap">Último: <b>${o.fmt(last.y)} ${o.unit}</b> · mín. ${o.fmt(Math.min(...ys))} · máx. ${o.fmt(Math.max(...ys))}</div></div>`;
+}
+function fuelCharts(v, fs) {
+  const cons = fs.list.filter(f => fs.per[f.id]).map(f => ({ d: f.fecha, y: fs.per[f.id] }));
+  const price = [...fs.list].sort((a, b) => a.fecha.localeCompare(b.fecha)).filter(f => f.litros && f.total).map(f => ({ d: f.fecha, y: f.total / f.litros }));
+  let h = '';
+  if (cons.length >= 5) {
+    const last = cons.slice(-3), prev = cons.slice(0, -3);
+    const a1 = last.reduce((s, p) => s + p.y, 0) / last.length, a0 = prev.reduce((s, p) => s + p.y, 0) / prev.length;
+    const diff = (a1 - a0) / a0 * 100;
+    if (diff > 8) h += `<div class="banner"><div><b>Tu consumo ha subido un ${fNum(diff, 0)}%</b>Últimos 3 depósitos: ${fNum(a1, 1)} L/100 km, frente a tu media de ${fNum(a0, 1)}. Si conduces igual que siempre, revisa la presión de los neumáticos y el filtro de aire.</div></div>`;
+  }
+  if (cons.length >= 2) h += `<div class="card"><div style="font-weight:700;margin-bottom:8px">Consumo por depósito (L/100 km)</div>${lineChart(cons, { fmt: y => fNum(y, 1), unit: 'L/100 km', color: 'var(--c2)', avg: fs.avg })}</div>`;
+  if (price.length >= 2) h += `<div class="card"><div style="font-weight:700;margin-bottom:8px">Precio del litro</div>${lineChart(price, { fmt: y => fNum(y, 3), unit: '€/L', color: 'var(--c1)' })}</div>`;
+  return h;
+}
+
 /* ================= Vistas ================= */
 function render() {
   $$('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
@@ -440,6 +552,8 @@ function vInicio() {
     h += `<div class="banner"><div style="flex:1"><b>Haz una copia de seguridad</b>${lb ? `Última: ${fDateRel(lb)}` : 'Aún no has descargado ninguna'}</div><button class="btn" data-a="exportFull">Descargar</button></div>`;
   }
 
+  const stale = D.vehicles.filter(v => !v.kmFecha || daysBetween(v.kmFecha, todayStr()) > 14);
+  if (stale.length) { const v = stale[0]; h += `<div class="banner"><div style="flex:1"><b>Actualiza los km · ${esc(vName(v))}</b>Hace ${spanText(daysBetween(v.kmFecha || todayStr(), todayStr()))} que no los pones. Así los avisos por km son más exactos.</div><button class="btn" data-a="km" data-id="${v.id}">Poner km</button></div>`; }
   if (D.vehicles.length) {
     const solo = D.vehicles.length === 1;
     h += `<div class="hscroll">${D.vehicles.map(v => `<div class="kmcard ${solo ? 'solo' : ''}">
@@ -523,6 +637,10 @@ function vtMto(v) {
   } else h += `<div class="card empty">Aún no hay tipos de mantenimiento.</div>`;
   h += `<div class="btns"><button class="btn ghost" data-a="addPlan" data-v="${v.id}">+ Nuevo tipo de mantenimiento</button></div>`;
   h += `<div class="note">Los intervalos recomendados son orientativos: compruébalos en el manual del vehículo.</div>`;
+  const qc = D.casa.filter(t => t.vehicleId === v.id).map(t => ({ t, st: casaStatus(t) })).sort((a, b) => a.st.days - b.st.days);
+  h += `<h2 class="sec">Revisiones rápidas</h2>`;
+  h += qc.length ? `<div class="card flush">${qc.map(({ t, st }) => casaRow(t, st)).join('')}</div>` : `<div class="card empty">Comprobaciones que haces tú: presión de neumáticos, niveles, luces…</div>`;
+  h += `<div class="btns">${qc.length ? '' : `<button class="btn ghost" data-a="addChecks" data-v="${v.id}">+ Añadir las habituales</button>`}<button class="btn ghost" data-a="addCheck" data-v="${v.id}">+ Nueva revisión</button></div>`;
   const recs = D.mtos.filter(m => m.vehicleId === v.id).sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 5);
   if (recs.length) h += `<h2 class="sec">Últimos registros</h2><div class="card flush">${recs.map(mtoRow).join('')}</div>`;
   return h;
@@ -541,6 +659,18 @@ function docRow(d) {
     ${d.precio ? `<div class="end">${fEur0(d.precio)}</div>` : ''}${CHEV}</button>`;
 }
 function vtDocs(v) {
+  return `<div class="btns"><button class="btn danger" data-a="accident" data-v="${v.id}">🚨 He tenido un accidente</button></div>` + vtDocs0(v) + glovebox(v);
+}
+const GLOVE = ['Permiso de circulación', 'Ficha técnica', 'Póliza del seguro', 'Carta verde', 'Tarjeta ITV'];
+function glovebox(v) {
+  const items = D.guantera.filter(g => g.vehicleId === v.id);
+  const missing = GLOVE.filter(n => !items.some(g => g.nombre === n));
+  return `<h2 class="sec">Guantera</h2><div class="note">Fotos de los papeles del vehículo, a mano aunque no tengas conexión.</div>
+    <div class="glove">${items.map(g => `<button class="gtile" data-a="gloveOpen" data-id="${g.id}"><div class="gimg" data-foto="${g.fotoId}"></div><span>${esc(g.nombre)}</span></button>`).join('')}
+    ${missing.map(n => `<button class="gtile add" data-a="gloveAdd" data-v="${v.id}" data-n="${esc(n)}"><div class="gimg">＋</div><span>${esc(n)}</span></button>`).join('')}
+    <button class="gtile add" data-a="gloveAdd" data-v="${v.id}" data-n=""><div class="gimg">＋</div><span>Otro</span></button></div>`;
+}
+function vtDocs0(v) {
   const ds = D.docs.filter(d => d.vehicleId === v.id).sort((a, b) => docStatus(a).days - docStatus(b).days);
   let h = ds.length ? `<div class="card flush">${ds.map(docRow).join('')}</div>` : `<div class="card empty">Sin documentos.</div>`;
   const missing = ['itv', 'seguro', 'impuesto'].filter(t => !ds.some(d => d.tipo === t));
@@ -567,6 +697,7 @@ function vtFuel(v) {
     <div class="stat"><div class="l">Media mensual</div><div class="v">${fEur0(sum(yr, f => f.total) / months)}</div><div class="d">últimos ${months} ${months === 1 ? 'mes' : 'meses'}</div></div></div>`;
   h += `<div class="card"><div style="font-weight:700;margin-bottom:8px">Gasto en combustible</div>${monthChart(expenses(v.id).filter(e => e.cat === 'combustible'))}
     <div class="muted small" style="margin-top:8px">Total: ${fNum(litros, 0)} L · ${fEur(total)} · precio medio ${litros ? fEur(total / litros, 3) : '—'}/L</div></div>`;
+  h += fuelCharts(v, fs);
   const sorted = [...list].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.km - a.km);
   h += `<h2 class="sec">Repostajes</h2><div class="card flush">${sorted.map(f => `<button class="row" data-a="editFuel" data-id="${f.id}"><div class="ico">⛽</div>
     <div class="txt"><div class="t">${fNum(f.litros, 2)} L · ${fEur(f.total / f.litros, 3)}/L</div><div class="s">${fDate(f.fecha)} · ${fKm(f.km)}${f.gasolinera ? ' · ' + esc(f.gasolinera) : ''}${f.lleno === false ? ' · parcial' : ''}</div></div>
@@ -601,16 +732,19 @@ function vtHist(v) {
   return h + (open ? '</div>' : '');
 }
 
+function casaRow(t, st) {
+  return `<div class="row lvl-${st.level}"><div class="ico">${t.emoji || '🏠'}</div>
+      <button class="txt" style="text-align:left" data-a="item" data-kind="casa" data-id="${t.id}"><div class="t">${esc(t.nombre)}</div>
+      <div class="s"><span class="st ${st.level}">${esc(st.text)}</span></div><div class="s small">${freqText(t)}${t.ultima ? ' · Última: ' + fDate(t.ultima) : ''}</div></button>
+      <button class="done-btn" data-a="hecho" data-id="${t.id}">✓ Hecho</button></div>`;
+}
 function vCasa() {
   let h = `<div class="top"><h1>Casa</h1><button class="iconbtn" data-a="addCasa" aria-label="Añadir tarea">+</button></div>`;
   const ord = { red: 0, yellow: 1, green: 2, none: 3 };
-  const ts = D.casa.map(t => ({ t, st: casaStatus(t) })).sort((a, b) => ord[a.st.level] - ord[b.st.level] || a.st.days - b.st.days);
+  const ts = D.casa.filter(t => !t.vehicleId).map(t => ({ t, st: casaStatus(t) })).sort((a, b) => ord[a.st.level] - ord[b.st.level] || a.st.days - b.st.days);
   h += `<h2 class="sec" style="margin-top:4px">Tareas periódicas</h2>`;
   if (ts.length) {
-    h += `<div class="card flush">${ts.map(({ t, st }) => `<div class="row lvl-${st.level}"><div class="ico">${t.emoji || '🏠'}</div>
-      <button class="txt" style="text-align:left" data-a="item" data-kind="casa" data-id="${t.id}"><div class="t">${esc(t.nombre)}</div>
-      <div class="s"><span class="st ${st.level}">${esc(st.text)}</span></div><div class="s small">${freqText(t)}${t.ultima ? ' · Última: ' + fDate(t.ultima) : ''}</div></button>
-      <button class="done-btn" data-a="hecho" data-id="${t.id}">✓ Hecho</button></div>`).join('')}</div>`;
+    h += `<div class="card flush">${ts.map(({ t, st }) => casaRow(t, st)).join('')}</div>`;
   } else h += `<div class="card empty"><div class="big">🏠</div><b>Sin tareas</b>Añade las tuyas o elige entre las sugerencias.</div>`;
   const sug = CASA_SUG.filter(s => !D.casa.some(t => t.nombre === s[1]));
   if (sug.length) h += `<div class="note" style="margin-top:4px">Sugerencias (toca para añadir):</div><div class="chips" style="flex-wrap:wrap">${sug.map((s, i) => `<button class="chip" data-a="addSug" data-i="${CASA_SUG.indexOf(s)}">${s[0]} ${esc(s[1])}</button>`).join('')}</div>`;
@@ -620,6 +754,12 @@ function vCasa() {
   h += pd.length ? `<div class="card flush">${pd.map(docRow).join('')}</div>` : `<div class="card empty">Apunta cuándo caducan tu DNI, pasaporte y carnet de conducir.</div>`;
   const miss = ['carnet', 'dni', 'pasaporte'].filter(t => !pd.some(d => d.tipo === t));
   h += `<div class="btns" style="flex-wrap:wrap">${miss.map(t => `<button class="btn ghost" data-a="addDoc" data-v="" data-t="${t}">+ ${t === 'carnet' ? 'Carnet' : DOC_TYPES[t].n}</button>`).join('')}<button class="btn ghost" data-a="addDoc" data-v="" data-t="otro">+ Otro</button></div>`;
+  const gs = D.garantias.map(g => ({ g, st: garStatus(g) })).sort((a, b) => (!!a.st.expired - !!b.st.expired) || a.st.days - b.st.days);
+  h += `<h2 class="sec">Garantías</h2>`;
+  h += gs.length ? `<div class="card flush">${gs.map(({ g, st }) => `<button class="row lvl-${st.level}" data-a="item" data-kind="gar" data-id="${g.id}" ${st.expired ? 'style="opacity:.55"' : ''}><div class="ico">🧾</div>
+    <div class="txt"><div class="t">${esc(g.nombre)}</div><div class="s">${g.tienda ? esc(g.tienda) + ' · ' : ''}<span class="st ${st.level}">${esc(st.text)}</span></div></div>
+    ${g.fotoId ? `<div class="thumb" data-foto="${g.fotoId}"></div>` : ''}${CHEV}</button>`).join('')}</div>` : `<div class="card empty">Guarda la factura de tus electrodomésticos y aparatos para saber hasta cuándo tienen garantía.</div>`;
+  h += `<div class="btns"><button class="btn ghost" data-a="addGar">+ Añadir garantía</button></div>`;
   return h;
 }
 
@@ -630,6 +770,9 @@ function vAjustes() {
     <p style="margin:0 0 12px" class="muted small">Tus datos solo están en este iPhone. Descarga una copia cada semana o cada dos y guárdala en iCloud Drive (Archivos).${s.lastBackup ? ` Última copia: <b>${fDateRel(s.lastBackup)}</b>.` : ''}</p>
     <button class="btn" data-a="exportFull">Descargar copia completa</button>
     <button class="btn sec" style="margin-top:10px" data-a="importFull">Importar copia</button></div>`;
+  h += `<h2 class="sec">Calendario del iPhone</h2><div class="card">
+    <p style="margin:0 0 12px" class="muted small">Añade las fechas importantes a tu Calendario, con aviso unos días antes. Son avisos del propio iPhone: llegan aunque no abras la app.</p>
+    <button class="btn" data-a="calAll">📅 Añadir fechas al Calendario</button></div>`;
   h += `<h2 class="sec">Exportar datos</h2><div class="card">
     <p style="margin:0 0 12px" class="muted small">Tabla con todos los registros (mantenimientos, repostajes y gastos) para abrir en Excel o Numbers.</p>
     <button class="btn sec" data-a="exportCsv">Exportar registros (CSV)</button></div>`;
@@ -645,7 +788,7 @@ function vAjustes() {
       <button class="btn" data-a="ntfyOn">Activar avisos</button>`;
   }
   h += `</div>`;
-  h += `<h2 class="sec">Datos</h2><div class="card"><div class="muted small" style="margin-bottom:12px">${D.vehicles.length} vehículos · ${D.mtos.length} mantenimientos · ${D.fuels.length} repostajes · ${D.pagos.length} gastos · ${D.casa.length} tareas · ${D.docs.length} documentos</div>
+  h += `<h2 class="sec">Datos</h2><div class="card"><div class="muted small" style="margin-bottom:12px">${D.vehicles.length} vehículos · ${D.mtos.length} mantenimientos · ${D.fuels.length} repostajes · ${D.pagos.length} gastos · ${D.casa.length} tareas · ${D.docs.length} documentos · ${D.garantias.length} garantías</div>
     <button class="btn danger" data-a="wipe">Borrar todos los datos</button></div>`;
   h += `<div class="version">Mi Garaje · versión ${APP_VERSION}</div>`;
   return h;
@@ -658,9 +801,10 @@ function formVehicle(id) {
     + F.row(F.text('marca', 'Marca', v.marca, 'placeholder="Seat" autocapitalize="words"'), F.text('modelo', 'Modelo', v.modelo, 'placeholder="León"'))
     + F.row(F.text('matricula', 'Matrícula', v.matricula, 'placeholder="1234 ABC" autocapitalize="characters"'), F.text('anio', 'Año', v.anio, 'inputmode="numeric" placeholder="2019"'))
     + F.row(F.km('km', 'Km actuales', v.km), F.select('combustible', 'Combustible', FUELS, v.combustible))
+    + F.date('matriculacion', 'Fecha de matriculación', v.matriculacion) + F.hint('Está en el permiso de circulación. Sirve para calcular cuándo toca la ITV.')
     + F.photo('foto', 'Foto', v.fotoId);
   if (id) body += `<button type="button" class="btn danger" data-a="delVehicle" data-id="${id}" style="margin-top:8px">Eliminar vehículo</button>`;
-  else body += F.check('presetPlans', 'Añadir mantenimientos recomendados', true) + F.check('presetDocs', 'Añadir ITV, seguro e impuesto', true)
+  else body += F.check('presetPlans', 'Añadir mantenimientos recomendados', true) + F.check('presetDocs', 'Añadir ITV, seguro e impuesto', true) + F.check('presetChecks', 'Añadir revisiones rápidas (presión, niveles, luces)', true)
     + F.hint('Después podrás indicar cuándo se hizo cada cosa por última vez y ajustar los intervalos.');
   openSheet({
     body, title: id ? 'Editar vehículo' : 'Nuevo vehículo', submit: id ? 'Guardar' : 'Añadir',
@@ -668,15 +812,19 @@ function formVehicle(id) {
       if (!fd.marca && !fd.modelo && !fd.matricula) { toast('Escribe al menos la marca, el modelo o la matrícula'); return false; }
       const km = intKm(fd.km) ?? 0;
       const o = id ? v : { id: uid(), creado: todayStr() };
-      Object.assign(o, { tipo: fd.tipo, marca: fd.marca, modelo: fd.modelo, matricula: fd.matricula.toUpperCase(), anio: fd.anio, combustible: fd.combustible });
+      Object.assign(o, { tipo: fd.tipo, marca: fd.marca, modelo: fd.modelo, matricula: fd.matricula.toUpperCase(), anio: fd.anio || (fd.matriculacion ? fd.matriculacion.slice(0, 4) : ''), combustible: fd.combustible, matriculacion: fd.matriculacion || null });
       o.fotoId = await takePhoto(form, 'foto', o.fotoId);
       if (!id) {
         o.km = km; o.kmFecha = todayStr(); D.vehicles.push(o);
         D.kmlog.push({ id: uid(), vehicleId: o.id, fecha: todayStr(), km });
         if (fd.presetPlans) (PRESET_PLANS[o.tipo] || PRESET_PLANS.coche).forEach(([n, k, m]) => D.plans.push({ id: uid(), vehicleId: o.id, nombre: n, cadaKm: k, cadaMeses: m, ultimaFecha: null, ultimoKm: null }));
-        if (fd.presetDocs) ['itv', 'seguro', 'impuesto'].forEach(t => D.docs.push({ id: uid(), vehicleId: o.id, tipo: t, vence: null }));
+        if (fd.presetDocs) ['itv', 'seguro', 'impuesto'].forEach(t => D.docs.push({ id: uid(), vehicleId: o.id, tipo: t, vence: t === 'itv' ? itvNext(o) : null }));
+        if (fd.presetChecks) addChecks(o);
         S.tab = 'vehiculos'; S.vehicleId = o.id; S.vtab = 'mto';
-      } else if (km !== v.km) setKm(o, km, todayStr(), true);
+      } else {
+        if (km !== v.km) setKm(o, km, todayStr(), true);
+        const itv = D.docs.find(x => x.vehicleId === o.id && x.tipo === 'itv' && !x.vence); if (itv && o.matriculacion) itv.vence = itvNext(o);
+      }
       save(); toast(id ? 'Guardado' : 'Vehículo añadido');
     }
   });
@@ -821,9 +969,10 @@ function formDoc(vId, tipo, id) {
   const types = Object.entries(DOC_TYPES).filter(([k, t]) => personal ? (t.personal || k === 'otro') : !t.personal).map(([k, t]) => [k, `${t.e} ${t.n}`]);
   const body = F.select('tipo', 'Tipo', types, d.tipo)
     + `<div data-show="otro">${F.text('nombre', 'Nombre', d.nombre, 'placeholder="Tarjeta sanitaria, garantía…"')}</div>`
-    + F.date('vence', 'Fecha de vencimiento / renovación', d.vence)
+    + F.date('vence', 'Fecha de vencimiento / renovación', d.vence || (d.tipo === 'itv' ? itvNext(veh(d.vehicleId)) : ''))
     + `<div data-show="seguro">${F.row(F.text('compania', 'Compañía', d.compania), F.text('poliza', 'Nº de póliza', d.poliza))}${F.text('telefono', 'Teléfono de asistencia', d.telefono, 'inputmode="tel" placeholder="900 000 000"')}</div>`
     + `<div data-show="seguro itv impuesto otro">${F.num('precio', 'Precio (€)', d.precio)}</div>`
+    + F.photo('foto', 'Foto del documento', d.fotoId)
     + F.area('notas', 'Notas', d.notas)
     + (id ? `<button type="button" class="btn danger" data-a="delDoc" data-id="${id}">Eliminar documento</button>` : '');
   openSheet({
@@ -833,8 +982,9 @@ function formDoc(vId, tipo, id) {
       const upd = () => $$('[data-show]', f).forEach(el => el.classList.toggle('hide', !el.dataset.show.split(' ').includes(sel.value)));
       sel.addEventListener('change', upd); upd();
     },
-    onSubmit: fd => {
+    onSubmit: async (fd, form) => {
       const o = id ? d : { id: uid(), vehicleId: d.vehicleId };
+      o.fotoId = await takePhoto(form, 'foto', o.fotoId);
       Object.assign(o, { tipo: fd.tipo, nombre: fd.nombre, vence: fd.vence || null, compania: fd.compania, poliza: fd.poliza, telefono: fd.telefono, precio: num(fd.precio), notas: fd.notas });
       if (!id) D.docs.push(o); save(); toast('Guardado');
     }
@@ -844,8 +994,8 @@ function formRenew(id) {
   const d = D.docs.find(x => x.id === id); const t = DOC_TYPES[d.tipo];
   const base = d.vence && d.vence > addDays(todayStr(), -90) ? d.vence : todayStr();
   const body = `<div class="hint" style="margin:0 4px 12px">Vencimiento actual: <b>${fDate(d.vence)}</b></div>`
-    + F.date('vence', 'Nueva fecha de vencimiento', addMonths(base, t.renew))
-    + (d.tipo === 'itv' ? F.hint('La ITV es anual o cada 2 años según la antigüedad del vehículo. Revisa la fecha de la pegatina.') : '')
+    + F.date('vence', 'Nueva fecha de vencimiento', addMonths(base, d.tipo === 'itv' && veh(d.vehicleId)?.matriculacion ? itvMonths(veh(d.vehicleId), base) : t.renew))
+    + (d.tipo === 'itv' ? F.hint(veh(d.vehicleId)?.matriculacion ? 'Calculada según la antigüedad del vehículo. Comprueba que coincide con la pegatina.' : 'Si pones la fecha de matriculación en la ficha del vehículo, la calculo yo. Comprueba la pegatina.') : '')
     + F.num('importe', 'Importe pagado (€)', d.precio)
     + F.check('pagar', 'Apuntarlo en los gastos', true)
     + (d.tipo === 'seguro' ? F.row(F.text('compania', 'Compañía', d.compania), F.text('poliza', 'Nº de póliza', d.poliza)) : '');
@@ -863,7 +1013,7 @@ function formRenew(id) {
   });
 }
 
-function formCasa(id, sug) {
+function formCasa(id, sug, vehicleId) {
   const t = id ? D.casa.find(x => x.id === id) : sug ? { emoji: sug[0], nombre: sug[1], cada: sug[2], unidad: sug[3] } : { emoji: '🏠', cada: 1, unidad: 'm' };
   const body = F.text('nombre', 'Tarea', t.nombre, 'placeholder="Limpiar filtro de la lavadora"')
     + `<div class="f"><span class="lbl">Icono</span><div class="tagsel emojis">${EMOJIS.map(e => `<label><input type="radio" name="emoji" value="${e}" ${e === t.emoji ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div></div>`
@@ -877,7 +1027,7 @@ function formCasa(id, sug) {
     onSubmit: fd => {
       if (!fd.nombre) { toast('Ponle un nombre'); return false; }
       const cada = intKm(fd.cada); if (!cada) { toast('Indica cada cuánto'); return false; }
-      const o = id ? t : { id: uid(), historial: [] };
+      const o = id ? t : { id: uid(), historial: [], vehicleId: vehicleId || null };
       if (fd.ultima && fd.ultima !== o.ultima && !o.historial.includes(fd.ultima)) o.historial.push(fd.ultima);
       Object.assign(o, { nombre: fd.nombre, emoji: fd.emoji || '🏠', cada, unidad: fd.unidad, ultima: fd.ultima || null, notas: fd.notas });
       if (!id) D.casa.push(o); save(); toast('Guardado');
@@ -890,25 +1040,98 @@ function hecho(id) {
   save(); render(); toast(`✓ ${t.nombre} · próxima: ${fDate(casaNext(t))}`, true);
 }
 
+
+function formGar(id) {
+  const g = id ? D.garantias.find(x => x.id === id) : { anios: 3, fecha: todayStr() };
+  const body = F.text('nombre', 'Producto', g.nombre, 'placeholder="Lavadora, televisor, móvil…"')
+    + F.row(F.text('tienda', 'Tienda', g.tienda), F.num('precio', 'Precio (€)', g.precio))
+    + F.row(F.date('fecha', 'Fecha de compra', g.fecha), F.num('anios', 'Años de garantía', g.anios))
+    + F.hint('En España, los productos nuevos comprados desde 2022 tienen 3 años de garantía legal.')
+    + F.photo('foto', 'Foto de la factura o el ticket', g.fotoId) + F.area('notas', 'Notas', g.notas)
+    + (id ? `<button type="button" class="btn danger" data-a="delGar" data-id="${id}">Eliminar garantía</button>` : '');
+  openSheet({
+    body, title: id ? 'Garantía' : 'Nueva garantía',
+    onSubmit: async (fd, form) => {
+      if (!fd.nombre) { toast('Escribe qué producto es'); return false; }
+      const o = id ? g : { id: uid() };
+      Object.assign(o, { nombre: fd.nombre, tienda: fd.tienda, precio: num(fd.precio), fecha: fd.fecha || null, anios: num(fd.anios) || 3, notas: fd.notas });
+      o.fotoId = await takePhoto(form, 'foto', o.fotoId);
+      if (!id) D.garantias.push(o); save(); toast('Garantía guardada');
+    }
+  });
+}
+function accident(vId) {
+  const v = veh(vId); const seg = D.docs.find(d => d.vehicleId === vId && d.tipo === 'seguro');
+  const tel = (seg?.telefono || '').replace(/[^\d+]/g, '');
+  const body = `<div class="card" style="margin:0 0 12px"><b>${esc(vName(v))}</b>${v.matricula ? ` <span class="plate"><span>${esc(v.matricula)}</span></span>` : ''}
+    <div class="muted small" style="margin-top:6px">${seg ? `Seguro: <b>${esc(seg.compania || '—')}</b>${seg.poliza ? ` · Póliza <b>${esc(seg.poliza)}</b>` : ''}` : 'No hay seguro apuntado en Papeles.'}</div></div>
+    <div class="btns" style="margin:0 0 14px"><a class="btn danger" href="tel:112">📞 112</a>${tel ? `<a class="btn" href="tel:${tel}">📞 Asistencia</a>` : ''}</div>
+    <ol class="steps">
+      <li><b>Ponte a salvo.</b> Enciende las luces de emergencia y ponte el chaleco antes de bajar.</li>
+      <li><b>Señaliza</b> con la baliza V16 en el techo.</li>
+      <li><b>Si hay heridos, llama al 112</b> y no los muevas salvo que haya peligro.</li>
+      <li><b>Haz fotos</b> de los daños de los dos vehículos, de cómo han quedado, de las matrículas y de la zona.</li>
+      <li><b>Rellena el parte amistoso</b> con el otro conductor: datos de los dos, matrículas, aseguradora y nº de póliza, las casillas de lo que ha pasado y el croquis. Firmadlo los dos y quedaos una copia cada uno. Si no estás de acuerdo, no firmes.</li>
+      <li><b>Avisa a tu seguro</b> como muy tarde en 7 días.</li>
+    </ol>
+    ${D.guantera.some(g => g.vehicleId === vId) ? `<button type="button" class="btn sec" data-a="accGlove" data-v="${vId}">Ver los papeles de la guantera</button>` : ''}`;
+  openSheet({ body, title: 'Accidente', submit: 'Cerrar', onSubmit: () => { } });
+}
+function formCalendar() {
+  const n = { doc: D.docs.map(evDoc).filter(Boolean).length, gar: D.garantias.map(evGar).filter(Boolean).length, plan: D.plans.filter(p => veh(p.vehicleId)).map(evPlan).filter(Boolean).length, casa: D.casa.map(evCasa).filter(Boolean).length };
+  const body = F.hint('Elige qué fechas quieres en el Calendario del iPhone. Cada una lleva su aviso: los papeles, 30 y 7 días antes; los mantenimientos, 7 días antes; las garantías, 30 días antes; y las tareas, ese mismo día a las 9:00.')
+    + F.check('doc', `📄 Papeles y documentos (${n.doc})`, true) + F.check('plan', `🔧 Mantenimientos del vehículo (${n.plan})`, true)
+    + F.check('gar', `🧾 Fin de garantías (${n.gar})`, true) + F.check('casa', `🏠 Tareas y revisiones rápidas (${n.casa})`, false)
+    + F.hint('Si después renuevas algo o cambian las fechas, vuelve a añadirlo. Las fechas de mantenimiento por km son una estimación según los km que haces.');
+  openSheet({
+    body, title: 'Añadir al Calendario', submit: 'Añadir',
+    onSubmit: fd => {
+      const ev = [...(fd.doc ? D.docs.map(evDoc) : []), ...(fd.plan ? D.plans.filter(p => veh(p.vehicleId)).map(evPlan) : []), ...(fd.gar ? D.garantias.map(evGar) : []), ...(fd.casa ? D.casa.map(evCasa) : [])];
+      addToCalendar(ev);
+    }
+  });
+}
+function pickPhoto() {
+  return new Promise(res => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.style.display = 'none'; document.body.append(i);
+    i.onchange = async () => { const f = i.files[0]; i.remove(); if (!f) return res(null); try { res(await resizeImage(f, 1800, .82)); } catch (e) { toast(e.message); res(null); } };
+    i.click();
+  });
+}
+async function showPhoto(id) { const p = await getPhoto(id); if (!p) return; const v = $('#viewer'); v.innerHTML = `<img src="${p}">`; v.classList.add('open'); }
+
 function openItem(kind, id) {
+  if (kind === 'gar') return openGar(id);
   if (kind === 'casa') {
     const t = D.casa.find(x => x.id === id); const st = casaStatus(t);
-    openActions(`${esc(t.nombre)}<br>${esc(st.text)}`, [{ label: '✓ Hecho hoy', fn: () => hecho(id) }, { label: 'Editar', fn: () => formCasa(id) }]);
+    const it = [{ label: '✓ Hecho hoy', fn: () => hecho(id) }, { label: 'Editar', fn: () => formCasa(id) }];
+    if (evCasa(t)) it.push({ label: '📅 Añadir al Calendario', now: true, fn: () => addToCalendar([evCasa(t)]) });
+    openActions(`${esc(t.nombre)}<br>${esc(st.text)}`, it);
   } else if (kind === 'plan') {
     const p = D.plans.find(x => x.id === id); const st = planStatus(p);
     const recs = planRecords(p);
     const items = [{ label: '🔧 Registrar que se ha hecho', fn: () => formMto(p.vehicleId, null, id) }, { label: 'Editar intervalo y última vez', fn: () => formPlan(p.vehicleId, id) }];
     if (recs.length) items.push({ label: `Ver historial (${recs.length})`, fn: () => planHistory(p) });
+    if (evPlan(p)) items.push({ label: '📅 Añadir al Calendario', now: true, fn: () => addToCalendar([evPlan(p)]) });
     openActions(`${esc(p.nombre)} · ${esc(vName(veh(p.vehicleId)))}<br>${esc(st.text)}`, items);
   } else if (kind === 'doc') {
     const d = D.docs.find(x => x.id === id); const st = docStatus(d);
     const items = [];
     if (d.vence) items.push({ label: '🔄 Renovar', fn: () => formRenew(id) });
     items.push({ label: d.vence ? 'Editar' : 'Añadir fecha y datos', fn: () => formDoc(d.vehicleId, d.tipo, id) });
+    if (d.fotoId) items.push({ label: '🖼️ Ver foto', now: true, fn: () => showPhoto(d.fotoId) });
+    if (d.vence) items.push({ label: '📅 Añadir al Calendario', now: true, fn: () => addToCalendar([evDoc(d)]) });
     if (d.telefono) items.push({ label: `📞 Llamar a asistencia (${d.telefono})`, fn: () => location.href = 'tel:' + d.telefono.replace(/\s/g, '') });
     const info = [d.compania, d.poliza ? 'Póliza ' + d.poliza : null].filter(Boolean).map(esc).join(' · ');
     openActions(`${esc(docName(d))}${d.vehicleId ? ' · ' + esc(vName(veh(d.vehicleId))) : ''}${info ? '<br>' + info : ''}<br>${esc(st.text)}`, items);
   }
+}
+function openGar(id) {
+  const g = D.garantias.find(x => x.id === id); const st = garStatus(g); const items = [];
+  if (g.fotoId) items.push({ label: '🧾 Ver factura', now: true, fn: () => showPhoto(g.fotoId) });
+  items.push({ label: 'Editar', fn: () => formGar(id) });
+  if (evGar(g)) items.push({ label: '📅 Añadir al Calendario', now: true, fn: () => addToCalendar([evGar(g)]) });
+  openActions(`${esc(g.nombre)}${g.tienda ? ' · ' + esc(g.tienda) : ''}<br>${esc(st.text)}`, items);
 }
 function planHistory(p) {
   const recs = planRecords(p);
@@ -947,6 +1170,10 @@ function loadDemo() {
     { id: uid(), vehicleId: car.id, cat: 'otros', concepto: 'Parking centro', importe: 8.4, fecha: addDays(t, -3) });
   D2.kmlog.push({ id: uid(), vehicleId: car.id, fecha: t, km: car.km }, { id: uid(), vehicleId: moto.id, fecha: moto.kmFecha, km: moto.km });
   [[0, -33], [1, -20], [3, -350], [4, -380], [5, -100], [8, -40]].forEach(([i, d]) => { const s = CASA_SUG[i]; D2.casa.push({ id: uid(), emoji: s[0], nombre: s[1], cada: s[2], unidad: s[3], ultima: addDays(t, d), historial: [addDays(t, d)] }); });
+  car.matriculacion = '2019-03-14';
+  D2.garantias.push({ id: uid(), nombre: 'Lavadora', tienda: 'MediaMarkt', fecha: addMonths(addDays(t, 40), -36), anios: 3, precio: 449 },
+    { id: uid(), nombre: 'Televisor', tienda: 'El Corte Inglés', fecha: addDays(t, -400), anios: 3, precio: 699 });
+  addChecks(car, D2); D2.casa.filter(x => x.vehicleId === car.id).forEach((x, i) => { x.ultima = addDays(t, [-35, -20, -40][i]); x.historial = [x.ultima]; });
   D2.settings = { demo: true };
   return D2;
 }
@@ -1025,7 +1252,7 @@ async function ntfySchedule() {
 const A = {
   tab: d => { S.tab = d.tab; S.vehicleId = null; closeSheet(); render(); scrollTo(0, 0); },
   closeSheet: () => closeSheet(),
-  sheetAct: d => { const it = sheetActions?.[+d.i]; closeSheet(); if (it) setTimeout(it.fn, 260); },
+  sheetAct: d => { const it = sheetActions?.[+d.i]; closeSheet(); if (it) { if (it.now) it.fn(); else setTimeout(it.fn, 260); } },
   undo: () => undo(),
   closeViewer: () => $('#viewer').classList.remove('open'),
   item: d => openItem(d.kind, d.id),
@@ -1051,7 +1278,8 @@ const A = {
     const photos = [v.fotoId, ...D.mtos.filter(m => m.vehicleId === d.id).map(m => m.fotoId)].filter(Boolean);
     for (const p of photos) await delPhoto(p);
     D.vehicles = D.vehicles.filter(x => x.id !== d.id);
-    for (const k of ['plans', 'mtos', 'fuels', 'pagos', 'docs', 'kmlog']) D[k] = D[k].filter(x => x.vehicleId !== d.id);
+    for (const g of D.guantera.filter(x => x.vehicleId === d.id)) await delPhoto(g.fotoId);
+    for (const k of ['plans', 'mtos', 'fuels', 'pagos', 'docs', 'kmlog', 'casa', 'guantera']) D[k] = D[k].filter(x => x.vehicleId !== d.id);
     S.vehicleId = null; save(); closeSheet(); render(); toast('Vehículo eliminado');
   },
   addPlan: d => formPlan(d.v),
@@ -1072,6 +1300,22 @@ const A = {
   delCasa: d => { if (!confirm('¿Eliminar esta tarea?')) return; D.casa = D.casa.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
   demo: () => { D = loadDemo(); save(); render(); toast('Datos de ejemplo cargados'); },
   wipeDemo: async () => { if (!confirm('¿Borrar los datos de ejemplo y empezar de cero?')) return; D = emptyData(); await idb.clear('photos'); await save(); render(); },
+  addGar: () => formGar(),
+  delGar: async d => { if (!confirm('¿Eliminar esta garantía?')) return; const g = D.garantias.find(x => x.id === d.id); await delPhoto(g.fotoId); D.garantias = D.garantias.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
+  addChecks: d => { addChecks(veh(d.v)); save(); render(); toast('Revisiones añadidas'); },
+  addCheck: d => formCasa(null, null, d.v),
+  accident: d => accident(d.v),
+  accGlove: d => { const gs = D.guantera.filter(g => g.vehicleId === d.v); closeSheet(); setTimeout(() => openActions('Papeles de la guantera', gs.map(g => ({ label: g.nombre, now: true, fn: () => showPhoto(g.fotoId) }))), 260); },
+  gloveAdd: async d => {
+    const url = await pickPhoto(); if (!url) return;
+    const nombre = d.n || prompt('¿Qué documento es?', '') || 'Documento';
+    D.guantera.push({ id: uid(), vehicleId: d.v, nombre, fotoId: await savePhoto(url) }); save(); render(); toast('Foto guardada en la guantera');
+  },
+  gloveOpen: d => {
+    const g = D.guantera.find(x => x.id === d.id);
+    openActions(esc(g.nombre), [{ label: '🖼️ Ver', now: true, fn: () => showPhoto(g.fotoId) }, { label: 'Eliminar', danger: true, fn: async () => { if (!confirm(`¿Eliminar la foto de «${g.nombre}»?`)) return; await delPhoto(g.fotoId); D.guantera = D.guantera.filter(x => x.id !== g.id); save(); render(); } }]);
+  },
+  calAll: () => formCalendar(),
   exportFull: () => exportFull(),
   importFull: () => importFull(),
   exportCsv: () => exportCsv(),
@@ -1099,7 +1343,7 @@ document.addEventListener('click', e => {
 document.addEventListener('click', e => {
   const th = e.target.closest('.thumb[data-foto], .hero .img[data-foto]'); if (!th) return;
   e.stopPropagation(); e.preventDefault();
-  getPhoto(th.dataset.foto).then(p => { if (!p) return; const v = $('#viewer'); v.innerHTML = `<img src="${p}">`; v.classList.add('open'); });
+  showPhoto(th.dataset.foto);
 }, true);
 
 /* ================= Inicio ================= */

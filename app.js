@@ -2,7 +2,7 @@
 /* Mi Garaje — vehículos, papeles y mantenimientos.
    Todos los datos se guardan solo en este dispositivo (IndexedDB). */
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 /* ================= Utilidades ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -379,12 +379,14 @@ function toast(msg, undoable = false) {
 }
 const CHEV = '<svg class="chev" viewBox="0 0 8 13"><path d="M1 1l5.5 5.5L1 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
 const BACK = '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>';
+const XICON = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+let lpDel = null;
 
 let sheetSubmit = null, sheetActions = null;
 function openSheet({ title, body, submit = 'Guardar', onSubmit, onRender }) {
   const root = $('#sheet-root');
   root.innerHTML = `<div class="backdrop" data-a="closeSheet"></div><form class="sheet" novalidate autocomplete="off">
-    <div class="sheet-head"><button type="button" class="link" data-a="closeSheet">Cancelar</button><h3>${esc(title)}</h3><button type="submit" class="link strong">${submit}</button></div>
+    <div class="grab"></div><div class="sheet-head"><span class="hl"><button type="button" class="xbtn" data-a="closeSheet" aria-label="Cerrar">${XICON}</button></span><h3>${esc(title)}</h3><button type="submit" class="link strong">${submit}</button></div>
     <div class="sheet-body">${body}</div></form>`;
   const form = $('form', root); form._photos = {};
   sheetSubmit = onSubmit; sheetActions = null;
@@ -409,15 +411,16 @@ function openSheet({ title, body, submit = 'Guardar', onSubmit, onRender }) {
 }
 function openActions(title, items) {
   const root = $('#sheet-root');
-  root.innerHTML = `<div class="backdrop" data-a="closeSheet"></div><div class="sheet"><div class="actions">
-    ${title ? `<div class="ttl">${title}</div>` : ''}
-    <div class="group">${items.map((it, i) => `<button type="button" data-a="sheetAct" data-i="${i}" class="${it.danger ? 'danger' : ''}">${esc(it.label)}</button>`).join('')}</div>
-    <div class="group"><button type="button" class="cancel" data-a="closeSheet">Cancelar</button></div></div></div>`;
+  if (lpDel) { const { kind, id } = lpDel; lpDel = null; items = [...items, { label: 'Borrar', danger: true, fn: () => removeItem(kind, id) }]; }
+  root.innerHTML = `<div class="backdrop" data-a="closeSheet"></div><div class="sheet"><div class="grab"></div>
+    <div class="sheet-head"><span class="hl"><button type="button" class="xbtn" data-a="closeSheet" aria-label="Cerrar">${XICON}</button></span><div class="ttl">${title || ''}</div><span class="hl"></span></div>
+    <div class="actions"><div class="group">${items.map((it, i) => `<button type="button" data-a="sheetAct" data-i="${i}" class="${it.danger ? 'danger' : ''}">${esc(it.label)}</button>`).join('')}</div></div></div>`;
   sheetActions = items;
   requestAnimationFrame(() => root.classList.add('open'));
 }
 function closeSheet() {
-  const root = $('#sheet-root'); root.classList.remove('open');
+  const root = $('#sheet-root'); const sh = $('.sheet', root); if (sh) { sh.style.transition = ''; sh.style.transform = ''; }
+  root.classList.remove('open');
   setTimeout(() => { if (!root.classList.contains('open')) root.innerHTML = ''; }, 320);
 }
 
@@ -517,6 +520,7 @@ function render() {
   $$('#tabbar button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   const v = { inicio: vInicio, vehiculos: S.vehicleId ? vVehiculo : vVehiculos, casa: vCasa, ajustes: vAjustes }[S.tab];
   $('#main').innerHTML = v();
+  openRow = null; enhanceRows($('#main'));
   hydratePhotos($('#main'));
 }
 
@@ -529,7 +533,7 @@ function rowItem(it, extra = '') {
 
 function vInicio() {
   const now = new Date();
-  let h = `<div class="top"><div><h1>Mi Garaje</h1><div class="sub">${now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase())}</div></div></div>`;
+  let h = `<header class="hdr"><div class="top"><div><h1>Mi Garaje</h1><div class="sub">${now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase())}</div></div></div></header>`;
   if (!D.vehicles.length && !D.casa.length && !D.docs.length) {
     return h + `<div class="card empty"><div class="big">👋</div><b>Empieza aquí</b>Añade tu vehículo y sus papeles. La app te avisará de lo que toca, por colores.</div>
       <div class="btns"><button class="btn" data-a="addVehicle">🚗 Añadir vehículo</button></div>
@@ -587,7 +591,7 @@ function vehAlerts(v) {
   return `<span class="pill green">Al día</span>`;
 }
 function vVehiculos() {
-  let h = `<div class="top"><h1>Vehículos</h1><button class="iconbtn" data-a="addVehicle" aria-label="Añadir vehículo">+</button></div>`;
+  let h = `<header class="hdr"><div class="top"><h1>Vehículos</h1><button class="iconbtn" data-a="addVehicle" aria-label="Añadir vehículo">+</button></div></header>`;
   if (!D.vehicles.length) return h + `<div class="card empty"><div class="big">🚗</div><b>Sin vehículos</b>Añade tu coche, moto o furgoneta.</div><div class="btns"><button class="btn" data-a="addVehicle">Añadir vehículo</button></div>`;
   h += D.vehicles.map(v => `<div class="card flush"><button class="vcard" data-a="openVehicle" data-id="${v.id}">
     <div class="avatar" ${v.fotoId ? `data-foto="${v.fotoId}"` : ''}>${vEmoji(v)}</div>
@@ -599,11 +603,10 @@ function vVehiculos() {
 function vVehiculo() {
   const v = veh(S.vehicleId); if (!v) { S.vehicleId = null; return vVehiculos(); }
   const rate = kmRate(v.id);
-  let h = `<button class="back" data-a="backVehicles">${BACK}Vehículos</button>`;
+  let h = `<header class="hdr"><div class="navbar"><button class="back" data-a="backVehicles">${BACK}Vehículos</button><b class="navttl">${esc(vName(v))}</b><button class="link navr" data-a="editVehicle" data-id="${v.id}">Editar</button></div></header>`;
   h += `<div class="hero"><div class="img" ${v.fotoId ? `data-foto="${v.fotoId}"` : ''}>${vEmoji(v)}</div><div class="info">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div style="min-width:0"><h3>${esc(vName(v))}</h3>
-    <div style="margin-top:6px">${v.matricula ? `<span class="plate"><span>${esc(v.matricula)}</span></span>` : ''}</div></div>
-    <button class="link" data-a="editVehicle" data-id="${v.id}">Editar</button></div>
+    <div style="margin-top:6px">${v.matricula ? `<span class="plate"><span>${esc(v.matricula)}</span></span>` : ''}</div></div></div>
     <div class="facts"><div><span>Kilómetros</span><b>${fNum(v.km || 0)}</b></div><div><span>Año</span><b>${v.anio || '—'}</b></div><div><span>${rate ? 'Km al año' : 'Combustible'}</span><b>${rate ? '≈ ' + fNum(rate * 365, 0) : (FUELS.find(f => f[0] === v.combustible)?.[1] || '—')}</b></div></div>
     </div></div>`;
   h += `<div class="btns"><button class="btn sec" data-a="km" data-id="${v.id}">Actualizar km</button><button class="btn sec" data-a="addPago" data-v="${v.id}">+ Gasto</button></div>`;
@@ -733,7 +736,7 @@ function casaRow(t, st) {
       <button class="done-btn" data-a="hecho" data-id="${t.id}">✓ Hecho</button></div>`;
 }
 function vCasa() {
-  let h = `<div class="top"><h1>Personal</h1></div>`;
+  let h = `<header class="hdr"><div class="top"><h1>Personal</h1></div></header>`;
   const pd = D.docs.filter(d => !d.vehicleId).sort((a, b) => docStatus(a).days - docStatus(b).days);
   h += `<h2 class="sec" style="margin-top:4px">Documentos personales</h2>`;
   h += pd.length ? `<div class="card flush">${pd.map(docRow).join('')}</div>` : `<div class="card empty">Apunta cuándo caducan tu DNI, pasaporte y carnet de conducir.</div>`;
@@ -750,7 +753,7 @@ function vCasa() {
 
 function vAjustes() {
   const s = D.settings;
-  let h = `<div class="top"><h1>Ajustes</h1></div>`;
+  let h = `<header class="hdr"><div class="top"><h1>Ajustes</h1></div></header>`;
   h += `<h2 class="sec" style="margin-top:4px">Copia de seguridad</h2><div class="card">
     <p style="margin:0 0 12px" class="muted small">Tus datos solo están en este iPhone. Descarga una copia cada semana o cada dos y guárdala en iCloud Drive (Archivos).${s.lastBackup ? ` Última copia: <b>${fDateRel(s.lastBackup)}</b>.` : ''}</p>
     <button class="btn" data-a="exportFull">Descargar copia completa</button>
@@ -1087,7 +1090,10 @@ function pickPhoto() {
     i.click();
   });
 }
-async function showPhoto(id) { const p = await getPhoto(id); if (!p) return; const v = $('#viewer'); v.innerHTML = `<img src="${p}">`; v.classList.add('open'); }
+const vz = { s: 1, base: 1, x: 0, y: 0, px: 0, py: 0, lastTap: 0 };
+function applyVz(x = vz.x, y = vz.y, anim = true) { const im = $('#viewer img'); if (!im) return; im.style.transition = anim ? '' : 'none'; im.style.transform = `translate(${x}px, ${y}px) scale(${vz.s})`; }
+async function showPhoto(id) { const p = await getPhoto(id); if (!p) return; const v = $('#viewer'); Object.assign(vz, { s: 1, x: 0, y: 0 }); v.style.background = ''; v.innerHTML = `<button class="xbtn vx" data-a="closeViewer" aria-label="Cerrar">${XICON}</button><img src="${p}" alt="">`; v.classList.add('open'); }
+function closeViewer() { const v = $('#viewer'); v.classList.remove('open'); v.style.background = ''; }
 
 
 /* ================= Importar cobros del banco ================= */
@@ -1414,11 +1420,11 @@ async function ntfySchedule() {
 
 /* ================= Acciones ================= */
 const A = {
-  tab: d => { S.tab = d.tab; S.vehicleId = null; closeSheet(); render(); scrollTo(0, 0); },
+  tab: d => { if (S.tab === d.tab && !S.vehicleId) { $('#main').scrollTop = 0; return; } pushNav(); S.tab = d.tab; S.vehicleId = null; closeSheet(); render(); $('#main').scrollTop = 0; },
   closeSheet: () => closeSheet(),
   sheetAct: d => { const it = sheetActions?.[+d.i]; closeSheet(); if (it) { if (it.now) it.fn(); else setTimeout(it.fn, 260); } },
   undo: () => undo(),
-  closeViewer: () => $('#viewer').classList.remove('open'),
+  closeViewer: () => closeViewer(),
   item: d => openItem(d.kind, d.id),
   hecho: d => hecho(d.id),
   toggleAll: () => { S.showAll = !S.showAll; render(); },
@@ -1434,8 +1440,10 @@ const A = {
   delKm: d => { if (!confirm('¿Eliminar este registro de km?')) return; D.kmlog = D.kmlog.filter(k => k.id !== d.id); save(); closeSheet(); render(); },
   addVehicle: () => formVehicle(),
   editVehicle: d => formVehicle(d.id),
-  openVehicle: d => { S.vehicleId = d.id; S.vtab = 'mto'; S.hfilter = 'all'; render(); scrollTo(0, 0); },
-  backVehicles: () => { S.vehicleId = null; render(); },
+  openVehicle: d => { pushNav(); S.tab = 'vehiculos'; S.vehicleId = d.id; S.vtab = 'mto'; S.hfilter = 'all'; render(); $('#main').scrollTop = 0; },
+  backVehicles: () => goBack(),
+  swEdit: (d, el) => { const w = el.closest('.sw'); closeRow(); KINDS[w.dataset.kind][1](w.dataset.id); },
+  swDel: (d, el) => { const w = el.closest('.sw'); removeItem(w.dataset.kind, w.dataset.id); },
   vtab: d => { S.vtab = d.t; render(); },
   delVehicle: async d => {
     const v = veh(d.id); if (!confirm(`¿Eliminar ${vName(v)} y todos sus registros (mantenimientos, repostajes, gastos y papeles)? No se puede deshacer.`)) return;
@@ -1498,6 +1506,154 @@ const A = {
     D = emptyData(); await idb.clear('photos'); await save(); S.vehicleId = null; S.tab = 'inicio'; render();
   }
 };
+
+/* ================= Gestos (como una app del iPhone) ================= */
+const NAV = [];
+function pushNav() { NAV.push({ tab: S.tab, vehicleId: S.vehicleId, vtab: S.vtab, top: $('#main').scrollTop }); if (NAV.length > 30) NAV.shift(); }
+const isOpen = sel => $(sel).classList.contains('open');
+function canGoBack() { return isOpen('#viewer') || isOpen('#sheet-root') || NAV.length > 0 || !!S.vehicleId || S.tab !== 'inicio'; }
+function goBack() {
+  if (isOpen('#viewer')) return closeViewer();
+  if (isOpen('#sheet-root')) return closeSheet();
+  const p = NAV.pop();
+  if (p) { Object.assign(S, { tab: p.tab, vehicleId: p.vehicleId && veh(p.vehicleId) ? p.vehicleId : null, vtab: p.vtab }); render(); $('#main').scrollTop = p.top || 0; return; }
+  if (S.vehicleId) S.vehicleId = null; else S.tab = 'inicio';
+  render(); $('#main').scrollTop = 0;
+}
+
+/* Filas que se deslizan a la izquierda para ver Editar / Borrar */
+const KINDS = {
+  fuel: ['fuels', id => formFuel(null, id)], mto: ['mtos', id => formMto(null, id)], pago: ['pagos', id => formPago(null, id)], km: ['kmlog', id => formEditKm(id)],
+  doc: ['docs', id => { const d = D.docs.find(x => x.id === id); formDoc(d.vehicleId, d.tipo, id); }], gar: ['garantias', id => formGar(id)],
+  plan: ['plans', id => formPlan(D.plans.find(x => x.id === id).vehicleId, id)], casa: ['casa', id => formCasa(id)]
+};
+function removeItem(kind, id) {
+  const store = KINDS[kind][0]; const it = D[store].find(x => x.id === id); if (!it) return;
+  snapshot(); D[store] = D[store].filter(x => x.id !== id); save(); render(); toast('Borrado', true);
+  if (it.fotoId) setTimeout(() => { if (!D[store].some(x => x.id === id)) delPhoto(it.fotoId); }, 6000);
+}
+const ROWKIND = { editFuel: 'fuel', editMto: 'mto', editPago: 'pago', editKm: 'km' };
+function enhanceRows(root) {
+  if (S.tab === 'inicio') return;
+  $$('.row', root).forEach(r => {
+    if (r.closest('.sw')) return;
+    let kind = ROWKIND[r.dataset.a], id = r.dataset.id;
+    if (!kind && r.dataset.a === 'item' && ['plan', 'doc', 'gar'].includes(r.dataset.kind)) kind = r.dataset.kind;
+    if (!kind) { const h = $('[data-a="hecho"]', r); if (h) { kind = 'casa'; id = h.dataset.id; } }
+    if (!kind) return;
+    const w = document.createElement('div'); w.className = 'sw'; w.dataset.kind = kind; w.dataset.id = id;
+    w.innerHTML = '<div class="sw-acts"><button class="sw-edit" data-a="swEdit">Editar</button><button class="sw-del" data-a="swDel">Borrar</button></div>';
+    r.replaceWith(w); w.append(r);
+  });
+}
+let openRow = null;
+function setRow(w, x, anim = true) { const r = w.lastElementChild; r.style.transition = anim ? '' : 'none'; r.style.transform = x ? `translateX(${x}px)` : ''; }
+function closeRow() { if (openRow) { setRow(openRow, 0); openRow = null; } }
+
+function longPress(el) {
+  try { navigator.vibrate?.(10); } catch { }
+  if (el.classList.contains('sw')) {
+    const k = el.dataset.kind, id = el.dataset.id;
+    if (['plan', 'doc', 'gar', 'casa'].includes(k)) { lpDel = { kind: k, id }; return openItem(k, id); }
+    return openActions('', [{ label: 'Editar', fn: () => KINDS[k][1](id) }, { label: 'Borrar', danger: true, fn: () => removeItem(k, id) }]);
+  }
+  if (el.dataset.a === 'item') return openItem(el.dataset.kind, el.dataset.id);
+  if (el.dataset.a === 'openVehicle') { const id = el.dataset.id; return openActions(`<b>${esc(vName(veh(id)))}</b>`, [{ label: 'Abrir', fn: () => A.openVehicle({ id }) }, { label: 'Actualizar km', fn: () => formKm(id) }, { label: 'Editar', fn: () => formVehicle(id) }]); }
+  if (el.dataset.a === 'gloveOpen') return A.gloveOpen(el.dataset);
+}
+
+const T = { on: false };
+let suppressClick = 0;
+document.addEventListener('touchstart', e => {
+  clearTimeout(T.lp);
+  if (e.touches.length > 1) { T.on = false; return; }
+  const t = e.touches[0], tg = e.target;
+  Object.assign(T, { on: true, x0: t.clientX, y0: t.clientY, t0: Date.now(), dx: 0, dy: 0, mode: null, cand: [], lpFired: false, sw: null });
+  if (isOpen('#viewer')) { T.cand = ['viewer']; return; }
+  if (isOpen('#sheet-root')) {
+    const sh = $('#sheet-root .sheet'), body = $('#sheet-root .sheet-body'); T.sheet = sh;
+    if (!sh) return;
+    if (!sh.contains(tg) || !body || !body.contains(tg) || body.scrollTop <= 0) T.cand = ['sheet'];
+    return;
+  }
+  if (T.x0 < 24 && canGoBack()) T.cand.push('edge');
+  const sw = tg.closest('.sw');
+  if (sw && !tg.closest('.sw-acts')) { T.cand.push('row'); T.sw = sw; T.base = sw === openRow ? -sw.firstElementChild.offsetWidth : 0; }
+  if (S.tab === 'inicio' && $('#main').scrollTop <= 0) T.cand.push('ptr');
+  const lpEl = tg.closest('.sw, [data-a="item"], [data-a="openVehicle"], [data-a="gloveOpen"]');
+  if (lpEl && !tg.closest('.sw-acts, [data-a="hecho"]')) T.lp = setTimeout(() => { if (!T.on || T.mode) return; T.lpFired = true; T.on = false; suppressClick = Date.now(); longPress(lpEl); }, 520);
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  if (!T.on || e.touches.length > 1) return;
+  const t = e.touches[0]; T.dx = t.clientX - T.x0; T.dy = t.clientY - T.y0;
+  const ax = Math.abs(T.dx), ay = Math.abs(T.dy);
+  if (ax > 8 || ay > 8) clearTimeout(T.lp);
+  if (!T.mode) {
+    if (ax < 6 && ay < 6) return;
+    const c = T.cand;
+    if (c.includes('viewer')) T.mode = vz.s > 1 ? 'pan' : (T.dy > 0 && ay > ax ? 'viewer' : 'none');
+    else if (c.includes('sheet')) T.mode = T.dy > 0 && ay > ax ? 'sheet' : 'none';
+    else if (c.includes('edge') && T.dx > 0 && ax > ay) T.mode = 'edge';
+    else if (c.includes('row') && ax > ay) { T.mode = 'row'; if (openRow && openRow !== T.sw) closeRow(); }
+    else if (c.includes('ptr') && T.dy > 0 && ay > ax) T.mode = 'ptr';
+    else T.mode = 'none';
+    if (T.mode !== 'none') suppressClick = Date.now();
+  }
+  if (T.mode === 'none') return;
+  if (e.cancelable) e.preventDefault();
+  const m = $('#main');
+  if (T.mode === 'edge') { m.style.transition = 'none'; m.style.transform = `translateX(${Math.max(0, T.dx)}px)`; }
+  else if (T.mode === 'sheet') { T.sheet.style.transition = 'none'; T.sheet.style.transform = `translateY(${Math.max(0, T.dy)}px)`; }
+  else if (T.mode === 'viewer') { const im = $('#viewer img'); if (im) { im.style.transition = 'none'; im.style.transform = `translateY(${T.dy}px)`; } $('#viewer').style.background = `rgba(0,0,0,${Math.max(.3, .92 - T.dy / 500)})`; }
+  else if (T.mode === 'pan') { vz.px = vz.x + T.dx; vz.py = vz.y + T.dy; applyVz(vz.px, vz.py, false); }
+  else if (T.mode === 'row') { const w = T.sw.firstElementChild.offsetWidth; let x = Math.min(0, T.base + T.dx); if (x < -w) x = -w - (-w - x) * .3; T.x = x; setRow(T.sw, x, false); }
+  else if (T.mode === 'ptr') {
+    const d = Math.min(110, T.dy * .5); T.pull = d; m.style.transition = 'none'; m.style.transform = `translateY(${d}px)`;
+    const pt = $('#ptr'); pt.style.transition = 'none'; pt.style.opacity = Math.min(1, d / 60); pt.style.transform = `translateY(${d - 46}px) rotate(${d * 5}deg)`;
+  }
+}, { passive: false });
+
+function endTouch() {
+  clearTimeout(T.lp);
+  if (!T.on) return; T.on = false;
+  const dt = Math.max(1, Date.now() - T.t0), m = $('#main');
+  if (T.mode === 'edge') {
+    if (T.dx > 90 || (T.dx > 40 && T.dx / dt > .5)) { m.style.transition = 'transform .18s ease-out'; m.style.transform = 'translateX(100%)'; setTimeout(() => { goBack(); m.style.transition = 'none'; m.style.transform = ''; }, 180); }
+    else { m.style.transition = 'transform .2s'; m.style.transform = ''; }
+  } else if (T.mode === 'sheet') {
+    if (T.dy > 120 || (T.dy > 40 && T.dy / dt > .5)) closeSheet(); else { T.sheet.style.transition = ''; T.sheet.style.transform = ''; }
+  } else if (T.mode === 'viewer') {
+    if (T.dy > 120 || (T.dy > 40 && T.dy / dt > .5)) closeViewer(); else { applyVz(0, 0, true); $('#viewer').style.background = ''; }
+  } else if (T.mode === 'pan') { vz.x = vz.px; vz.y = vz.py; }
+  else if (T.mode === 'row') {
+    const w = T.sw.firstElementChild.offsetWidth;
+    if (T.x < -w / 2 || (T.dx < -30 && -T.dx / dt > .4)) { setRow(T.sw, -w); openRow = T.sw; } else { setRow(T.sw, 0); if (openRow === T.sw) openRow = null; }
+  } else if (T.mode === 'ptr') {
+    const pt = $('#ptr'); m.style.transition = 'transform .25s'; pt.style.transition = 'transform .25s, opacity .25s';
+    const reset = () => { m.style.transform = ''; pt.style.opacity = 0; pt.style.transform = 'translateY(-46px)'; pt.classList.remove('spin'); };
+    if (T.pull > 60) { m.style.transform = 'translateY(56px)'; pt.style.transform = 'translateY(12px)'; pt.classList.add('spin'); setTimeout(() => { render(); ntfySchedule(); reset(); toast('Actualizado'); }, 650); }
+    else reset();
+  } else if (!T.mode && T.cand.includes('viewer')) {
+    const now = Date.now();
+    if (now - vz.lastTap < 300) { vz.s = vz.s > 1 ? 1 : 2.5; vz.x = vz.y = 0; applyVz(0, 0, true); vz.lastTap = 0; suppressClick = now; } else vz.lastTap = now;
+  }
+}
+document.addEventListener('touchend', endTouch);
+document.addEventListener('touchcancel', endTouch);
+
+/* Sin zoom de página (solo en el visor de fotos), sin menú del sistema al mantener pulsado */
+document.addEventListener('gesturestart', e => { e.preventDefault(); vz.base = vz.s; });
+document.addEventListener('gesturechange', e => { e.preventDefault(); if (!isOpen('#viewer')) return; vz.s = Math.min(5, Math.max(1, vz.base * e.scale)); if (vz.s === 1) { vz.x = vz.y = 0; } applyVz(vz.x, vz.y, false); });
+document.addEventListener('gestureend', e => e.preventDefault());
+document.addEventListener('dblclick', e => e.preventDefault());
+document.addEventListener('contextmenu', e => { if (!e.target.closest('input, textarea')) e.preventDefault(); });
+document.addEventListener('click', e => {
+  if (Date.now() - suppressClick < 450) { e.preventDefault(); e.stopPropagation(); return; }
+  if (openRow && !e.target.closest('.sw-acts')) { e.preventDefault(); e.stopPropagation(); closeRow(); return; }
+  if (e.target.id === 'viewer') { e.preventDefault(); closeViewer(); }
+}, true);
+
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-a]'); if (!el) return;
   const fn = A[el.dataset.a]; if (!fn) return;

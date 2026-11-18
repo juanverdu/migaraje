@@ -1,8 +1,8 @@
 'use strict';
-/* Mi Garaje — vehículos, papeles y mantenimientos de casa.
+/* Mi Garaje — vehículos, papeles y mantenimientos.
    Todos los datos se guardan solo en este dispositivo (IndexedDB). */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ================= Utilidades ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -89,7 +89,7 @@ const idb = {
 
 const emptyData = () => ({ schema: 1, vehicles: [], docs: [], plans: [], mtos: [], fuels: [], pagos: [], casa: [], kmlog: [], garantias: [], guantera: [], settings: {} });
 let D = emptyData();
-function normalize(d) { const e = emptyData(); for (const k in e) if (d[k] == null) d[k] = e[k]; return d; }
+function normalize(d) { const e = emptyData(); for (const k in e) if (d[k] == null) d[k] = e[k]; d.casa = d.casa.filter(t => t.vehicleId); return d; }
 function save() { return idb.put('kv', 'data', D).catch(e => toast('No se pudo guardar: ' + e.message)); }
 
 let undoSnap = null;
@@ -149,12 +149,6 @@ const PRESET_PLANS = {
     ['Pastillas de freno', 15000, null], ['Líquido de frenos', null, 24], ['Filtro de aire', 12000, 24], ['Bujías', 12000, 36], ['Batería', null, 36], ['Revisión general', 12000, 12]]
 };
 PRESET_PLANS.furgo = PRESET_PLANS.coche; PRESET_PLANS.otro = PRESET_PLANS.coche;
-const CASA_SUG = [
-  ['🧺', 'Limpiar filtro de la lavadora', 1, 'm'], ['🧼', 'Lavado de cuba de la lavadora', 1, 'm'], ['🍽️', 'Limpiar filtro del lavavajillas', 1, 'm'],
-  ['🔥', 'Revisión de la caldera', 1, 'a'], ['♨️', 'Purgar radiadores', 1, 'a'], ['🌬️', 'Limpiar filtros del aire acondicionado', 6, 'm'],
-  ['🍳', 'Cambiar filtro de la campana', 3, 'm'], ['💧', 'Cambiar filtro de agua', 6, 'm'], ['☕', 'Descalcificar cafetera', 2, 'm'],
-  ['🧊', 'Limpiar la nevera', 3, 'm'], ['🚨', 'Probar detector de humo', 6, 'm'], ['🛏️', 'Dar la vuelta al colchón', 6, 'm']
-];
 const EMOJIS = ['🏠', '🛞', '🛢️', '🚗', '📺', '🧾', '🧺', '🧼', '🍽️', '🔥', '♨️', '🌬️', '💧', '🍳', '☕', '🧊', '🚨', '🛏️', '🪴', '🧹', '🔌', '💡', '🐾', '🪪', '📄', '🦷', '💊', '🔑', '🛠️'];
 function planEmoji(n) {
   n = (n || '').toLowerCase();
@@ -337,7 +331,7 @@ function upcoming(ref = todayStr()) {
   D.docs.forEach(d => { const v = veh(d.vehicleId); it.push({ kind: 'doc', id: d.id, e: DOC_TYPES[d.tipo].e, title: docName(d), sub: d.vehicleId ? vName(v) : 'Personal', st: docStatus(d, ref) }); });
   D.plans.forEach(p => { const v = veh(p.vehicleId); if (!v) return; it.push({ kind: 'plan', id: p.id, e: planEmoji(p.nombre), title: p.nombre, sub: vName(v), st: planStatus(p, ref) }); });
   D.casa.forEach(t => { if (t.vehicleId && !veh(t.vehicleId)) return; it.push({ kind: 'casa', id: t.id, e: t.emoji || '🏠', title: t.nombre, sub: t.vehicleId ? vName(veh(t.vehicleId)) : 'Casa', st: casaStatus(t, ref) }); });
-  D.garantias.forEach(g => { const st = garStatus(g, ref); if (!st.expired) it.push({ kind: 'gar', id: g.id, e: '🧾', title: 'Garantía: ' + g.nombre, sub: g.tienda || 'Casa', st }); });
+  D.garantias.forEach(g => { const st = garStatus(g, ref); if (!st.expired) it.push({ kind: 'gar', id: g.id, e: '🧾', title: 'Garantía: ' + g.nombre, sub: g.tienda || 'Personal', st }); });
   const ord = { red: 0, yellow: 1, green: 2, none: 3 };
   return it.sort((a, b) => (a.st.level === 'none') - (b.st.level === 'none') || a.st.days - b.st.days || ord[a.st.level] - ord[b.st.level]);
 }
@@ -537,9 +531,8 @@ function vInicio() {
   const now = new Date();
   let h = `<div class="top"><div><h1>Mi Garaje</h1><div class="sub">${now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase())}</div></div></div>`;
   if (!D.vehicles.length && !D.casa.length && !D.docs.length) {
-    return h + `<div class="card empty"><div class="big">👋</div><b>Empieza aquí</b>Añade tu vehículo y las tareas de casa. La app te avisará de lo que toca, por colores.</div>
+    return h + `<div class="card empty"><div class="big">👋</div><b>Empieza aquí</b>Añade tu vehículo y sus papeles. La app te avisará de lo que toca, por colores.</div>
       <div class="btns"><button class="btn" data-a="addVehicle">🚗 Añadir vehículo</button></div>
-      <div class="btns"><button class="btn sec" data-a="tab" data-tab="casa">🏠 Tareas de casa</button></div>
       <div class="btns"><button class="btn ghost" data-a="demo">Probar con datos de ejemplo</button></div>`;
   }
   const all = upcoming();
@@ -675,7 +668,7 @@ function vtDocs0(v) {
   let h = ds.length ? `<div class="card flush">${ds.map(docRow).join('')}</div>` : `<div class="card empty">Sin documentos.</div>`;
   const missing = ['itv', 'seguro', 'impuesto'].filter(t => !ds.some(d => d.tipo === t));
   h += `<div class="btns">${missing.map(t => `<button class="btn ghost" data-a="addDoc" data-v="${v.id}" data-t="${t}">+ ${DOC_TYPES[t].n.split(' ')[0]}</button>`).join('')}<button class="btn ghost" data-a="addDoc" data-v="${v.id}" data-t="otro">+ Otro</button></div>`;
-  h += `<div class="note">🟢 más de 45 días · 🟡 menos de 45 días · 🔴 menos de 15 días o caducado. El carnet de conducir está en Casa → Documentos personales.</div>`;
+  h += `<div class="note">🟢 más de 45 días · 🟡 menos de 45 días · 🔴 menos de 15 días o caducado. El carnet de conducir está en la pestaña Personal.</div>`;
   return h;
 }
 
@@ -739,18 +732,9 @@ function casaRow(t, st) {
       <button class="done-btn" data-a="hecho" data-id="${t.id}">✓ Hecho</button></div>`;
 }
 function vCasa() {
-  let h = `<div class="top"><h1>Casa</h1><button class="iconbtn" data-a="addCasa" aria-label="Añadir tarea">+</button></div>`;
-  const ord = { red: 0, yellow: 1, green: 2, none: 3 };
-  const ts = D.casa.filter(t => !t.vehicleId).map(t => ({ t, st: casaStatus(t) })).sort((a, b) => ord[a.st.level] - ord[b.st.level] || a.st.days - b.st.days);
-  h += `<h2 class="sec" style="margin-top:4px">Tareas periódicas</h2>`;
-  if (ts.length) {
-    h += `<div class="card flush">${ts.map(({ t, st }) => casaRow(t, st)).join('')}</div>`;
-  } else h += `<div class="card empty"><div class="big">🏠</div><b>Sin tareas</b>Añade las tuyas o elige entre las sugerencias.</div>`;
-  const sug = CASA_SUG.filter(s => !D.casa.some(t => t.nombre === s[1]));
-  if (sug.length) h += `<div class="note" style="margin-top:4px">Sugerencias (toca para añadir):</div><div class="chips" style="flex-wrap:wrap">${sug.map((s, i) => `<button class="chip" data-a="addSug" data-i="${CASA_SUG.indexOf(s)}">${s[0]} ${esc(s[1])}</button>`).join('')}</div>`;
-
+  let h = `<div class="top"><h1>Personal</h1></div>`;
   const pd = D.docs.filter(d => !d.vehicleId).sort((a, b) => docStatus(a).days - docStatus(b).days);
-  h += `<h2 class="sec">Documentos personales</h2>`;
+  h += `<h2 class="sec" style="margin-top:4px">Documentos personales</h2>`;
   h += pd.length ? `<div class="card flush">${pd.map(docRow).join('')}</div>` : `<div class="card empty">Apunta cuándo caducan tu DNI, pasaporte y carnet de conducir.</div>`;
   const miss = ['carnet', 'dni', 'pasaporte'].filter(t => !pd.some(d => d.tipo === t));
   h += `<div class="btns" style="flex-wrap:wrap">${miss.map(t => `<button class="btn ghost" data-a="addDoc" data-v="" data-t="${t}">+ ${t === 'carnet' ? 'Carnet' : DOC_TYPES[t].n}</button>`).join('')}<button class="btn ghost" data-a="addDoc" data-v="" data-t="otro">+ Otro</button></div>`;
@@ -788,7 +772,7 @@ function vAjustes() {
       <button class="btn" data-a="ntfyOn">Activar avisos</button>`;
   }
   h += `</div>`;
-  h += `<h2 class="sec">Datos</h2><div class="card"><div class="muted small" style="margin-bottom:12px">${D.vehicles.length} vehículos · ${D.mtos.length} mantenimientos · ${D.fuels.length} repostajes · ${D.pagos.length} gastos · ${D.casa.length} tareas · ${D.docs.length} documentos · ${D.garantias.length} garantías</div>
+  h += `<h2 class="sec">Datos</h2><div class="card"><div class="muted small" style="margin-bottom:12px">${D.vehicles.length} vehículos · ${D.mtos.length} mantenimientos · ${D.fuels.length} repostajes · ${D.pagos.length} gastos · ${D.casa.length} revisiones · ${D.docs.length} documentos · ${D.garantias.length} garantías</div>
     <button class="btn danger" data-a="wipe">Borrar todos los datos</button></div>`;
   h += `<div class="version">Mi Garaje · versión ${APP_VERSION}</div>`;
   return h;
@@ -1015,15 +999,15 @@ function formRenew(id) {
 
 function formCasa(id, sug, vehicleId) {
   const t = id ? D.casa.find(x => x.id === id) : sug ? { emoji: sug[0], nombre: sug[1], cada: sug[2], unidad: sug[3] } : { emoji: '🏠', cada: 1, unidad: 'm' };
-  const body = F.text('nombre', 'Tarea', t.nombre, 'placeholder="Limpiar filtro de la lavadora"')
+  const body = F.text('nombre', 'Revisión', t.nombre, 'placeholder="Presión de neumáticos"')
     + `<div class="f"><span class="lbl">Icono</span><div class="tagsel emojis">${EMOJIS.map(e => `<label><input type="radio" name="emoji" value="${e}" ${e === t.emoji ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div></div>`
     + F.row(F.text('cada', 'Cada', t.cada, 'inputmode="numeric"'), F.select('unidad', 'Unidad', [['d', 'Días'], ['s', 'Semanas'], ['m', 'Meses'], ['a', 'Años']], t.unidad))
     + F.date('ultima', 'Última vez que lo hiciste', t.ultima) + F.hint('Si no lo sabes, déjalo vacío y pulsa «Hecho» la próxima vez.')
     + F.area('notas', 'Notas', t.notas)
     + (id && t.historial?.length ? `<div class="hint">Historial: ${t.historial.slice(-8).reverse().map(x => fDate(x)).join(' · ')}</div>` : '')
-    + (id ? `<button type="button" class="btn danger" data-a="delCasa" data-id="${id}">Eliminar tarea</button>` : '');
+    + (id ? `<button type="button" class="btn danger" data-a="delCasa" data-id="${id}">Eliminar revisión</button>` : '');
   openSheet({
-    body, title: id ? 'Editar tarea' : 'Nueva tarea',
+    body, title: id ? 'Editar revisión' : 'Nueva revisión',
     onSubmit: fd => {
       if (!fd.nombre) { toast('Ponle un nombre'); return false; }
       const cada = intKm(fd.cada); if (!cada) { toast('Indica cada cuánto'); return false; }
@@ -1079,9 +1063,9 @@ function accident(vId) {
 }
 function formCalendar() {
   const n = { doc: D.docs.map(evDoc).filter(Boolean).length, gar: D.garantias.map(evGar).filter(Boolean).length, plan: D.plans.filter(p => veh(p.vehicleId)).map(evPlan).filter(Boolean).length, casa: D.casa.map(evCasa).filter(Boolean).length };
-  const body = F.hint('Elige qué fechas quieres en el Calendario del iPhone. Cada una lleva su aviso: los papeles, 30 y 7 días antes; los mantenimientos, 7 días antes; las garantías, 30 días antes; y las tareas, ese mismo día a las 9:00.')
+  const body = F.hint('Elige qué fechas quieres en el Calendario del iPhone. Cada una lleva su aviso: los papeles, 30 y 7 días antes; los mantenimientos, 7 días antes; las garantías, 30 días antes; y las revisiones rápidas, ese mismo día a las 9:00.')
     + F.check('doc', `📄 Papeles y documentos (${n.doc})`, true) + F.check('plan', `🔧 Mantenimientos del vehículo (${n.plan})`, true)
-    + F.check('gar', `🧾 Fin de garantías (${n.gar})`, true) + F.check('casa', `🏠 Tareas y revisiones rápidas (${n.casa})`, false)
+    + F.check('gar', `🧾 Fin de garantías (${n.gar})`, true) + F.check('casa', `🛞 Revisiones rápidas (${n.casa})`, false)
     + F.hint('Si después renuevas algo o cambian las fechas, vuelve a añadirlo. Las fechas de mantenimiento por km son una estimación según los km que haces.');
   openSheet({
     body, title: 'Añadir al Calendario', submit: 'Añadir',
@@ -1169,7 +1153,6 @@ function loadDemo() {
     { id: uid(), vehicleId: car.id, cat: 'otros', concepto: 'Lavado', importe: 12, fecha: addDays(t, -6) },
     { id: uid(), vehicleId: car.id, cat: 'otros', concepto: 'Parking centro', importe: 8.4, fecha: addDays(t, -3) });
   D2.kmlog.push({ id: uid(), vehicleId: car.id, fecha: t, km: car.km }, { id: uid(), vehicleId: moto.id, fecha: moto.kmFecha, km: moto.km });
-  [[0, -33], [1, -20], [3, -350], [4, -380], [5, -100], [8, -40]].forEach(([i, d]) => { const s = CASA_SUG[i]; D2.casa.push({ id: uid(), emoji: s[0], nombre: s[1], cada: s[2], unidad: s[3], ultima: addDays(t, d), historial: [addDays(t, d)] }); });
   car.matriculacion = '2019-03-14';
   D2.garantias.push({ id: uid(), nombre: 'Lavadora', tienda: 'MediaMarkt', fecha: addMonths(addDays(t, 40), -36), anios: 3, precio: 449 },
     { id: uid(), nombre: 'Televisor', tienda: 'El Corte Inglés', fecha: addDays(t, -400), anios: 3, precio: 699 });
@@ -1199,7 +1182,7 @@ function importFull() {
       const j = JSON.parse(await inp.files[0].text());
       if (j.app !== 'aldia' || !j.data) throw new Error('El archivo no es una copia de Mi Garaje');
       const d = j.data;
-      if (!confirm(`Copia del ${new Date(j.exportado).toLocaleDateString('es-ES')}: ${d.vehicles?.length || 0} vehículos, ${d.mtos?.length || 0} mantenimientos, ${d.fuels?.length || 0} repostajes, ${d.casa?.length || 0} tareas.\n\nSe reemplazarán los datos actuales. ¿Continuar?`)) return;
+      if (!confirm(`Copia del ${new Date(j.exportado).toLocaleDateString('es-ES')}: ${d.vehicles?.length || 0} vehículos, ${d.mtos?.length || 0} mantenimientos, ${d.fuels?.length || 0} repostajes, ${d.casa?.length || 0} revisiones.\n\nSe reemplazarán los datos actuales. ¿Continuar?`)) return;
       const keep = { ntfyTopic: D.settings.ntfyTopic, ntfyOn: D.settings.ntfyOn };
       D = normalize(d); if (!D.settings.ntfyTopic && keep.ntfyTopic) Object.assign(D.settings, keep);
       await idb.clear('photos'); for (const k in photoCache) delete photoCache[k];
@@ -1216,7 +1199,7 @@ function exportCsv() {
   D.fuels.forEach(f => rows.push([f.fecha, vn(f.vehicleId), 'Repostaje', f.lleno === false ? 'Repostaje parcial' : 'Repostaje (lleno)', f.km, f.litros, f.total, f.gasolinera || '', '']));
   D.pagos.forEach(p => rows.push([p.fecha, vn(p.vehicleId), CATS[p.cat]?.n || p.cat, p.concepto || '', '', '', p.importe, '', p.notas || '']));
   D.kmlog.forEach(k => rows.push([k.fecha, vn(k.vehicleId), 'Km', 'Actualización de km', k.km, '', '', '', '']));
-  D.casa.forEach(t => (t.historial || []).forEach(h => rows.push([h, 'Casa', 'Tarea de casa', t.nombre, '', '', '', '', ''])));
+  D.casa.forEach(t => (t.historial || []).forEach(h => rows.push([h, vn(t.vehicleId), 'Revisión rápida', t.nombre, '', '', '', '', ''])));
   const head = rows.shift(); rows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
   const cell = v => { if (typeof v === 'number') v = String(v).replace('.', ','); v = String(v ?? ''); return /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
   const csv = '﻿' + [head, ...rows].map(r => r.map(cell).join(';')).join('\r\n');
@@ -1295,9 +1278,7 @@ const A = {
   delPago: d => { if (!confirm('¿Eliminar este gasto?')) return; D.pagos = D.pagos.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
   addDoc: d => formDoc(d.v || null, d.t),
   delDoc: d => { if (!confirm('¿Eliminar este documento?')) return; D.docs = D.docs.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
-  addCasa: () => formCasa(),
-  addSug: d => formCasa(null, CASA_SUG[+d.i]),
-  delCasa: d => { if (!confirm('¿Eliminar esta tarea?')) return; D.casa = D.casa.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
+  delCasa: d => { if (!confirm('¿Eliminar esta revisión?')) return; D.casa = D.casa.filter(x => x.id !== d.id); save(); closeSheet(); render(); },
   demo: () => { D = loadDemo(); save(); render(); toast('Datos de ejemplo cargados'); },
   wipeDemo: async () => { if (!confirm('¿Borrar los datos de ejemplo y empezar de cero?')) return; D = emptyData(); await idb.clear('photos'); await save(); render(); },
   addGar: () => formGar(),

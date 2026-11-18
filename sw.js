@@ -1,5 +1,5 @@
 // Mi Garaje — service worker: funciona sin conexión y se actualiza solo.
-const CACHE = 'migaraje-1.1.0';
+const CACHE = 'migaraje-1.2.0';
 const FILES = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

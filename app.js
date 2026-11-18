@@ -1,8 +1,8 @@
 'use strict';
-/* Al Día — vehículos, papeles y mantenimientos de casa.
+/* Mi Garaje — vehículos, papeles y mantenimientos de casa.
    Todos los datos se guardan solo en este dispositivo (IndexedDB). */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 /* ================= Utilidades ================= */
 const $ = (s, el = document) => el.querySelector(s);
@@ -423,7 +423,7 @@ function rowItem(it, extra = '') {
 
 function vInicio() {
   const now = new Date();
-  let h = `<div class="top"><div><h1>Al Día</h1><div class="sub">${now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase())}</div></div></div>`;
+  let h = `<div class="top"><div><h1>Mi Garaje</h1><div class="sub">${now.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase())}</div></div></div>`;
   if (!D.vehicles.length && !D.casa.length && !D.docs.length) {
     return h + `<div class="card empty"><div class="big">👋</div><b>Empieza aquí</b>Añade tu vehículo y las tareas de casa. La app te avisará de lo que toca, por colores.</div>
       <div class="btns"><button class="btn" data-a="addVehicle">🚗 Añadir vehículo</button></div>
@@ -647,7 +647,7 @@ function vAjustes() {
   h += `</div>`;
   h += `<h2 class="sec">Datos</h2><div class="card"><div class="muted small" style="margin-bottom:12px">${D.vehicles.length} vehículos · ${D.mtos.length} mantenimientos · ${D.fuels.length} repostajes · ${D.pagos.length} gastos · ${D.casa.length} tareas · ${D.docs.length} documentos</div>
     <button class="btn danger" data-a="wipe">Borrar todos los datos</button></div>`;
-  h += `<div class="version">Al Día · versión ${APP_VERSION}</div>`;
+  h += `<div class="version">Mi Garaje · versión ${APP_VERSION}</div>`;
   return h;
 }
 
@@ -963,14 +963,14 @@ async function shareOrDownload(blob, name) {
 async function exportFull() {
   const photos = await idb.all('photos');
   const blob = new Blob([JSON.stringify({ app: 'aldia', version: APP_VERSION, exportado: new Date().toISOString(), data: D, photos })], { type: 'application/json' });
-  if (await shareOrDownload(blob, `aldia-copia-${todayStr()}.json`)) { D.settings.lastBackup = todayStr(); save(); render(); toast('Copia descargada'); }
+  if (await shareOrDownload(blob, `migaraje-copia-${todayStr()}.json`)) { D.settings.lastBackup = todayStr(); save(); render(); toast('Copia descargada'); }
 }
 function importFull() {
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
   inp.onchange = async () => {
     try {
       const j = JSON.parse(await inp.files[0].text());
-      if (j.app !== 'aldia' || !j.data) throw new Error('El archivo no es una copia de Al Día');
+      if (j.app !== 'aldia' || !j.data) throw new Error('El archivo no es una copia de Mi Garaje');
       const d = j.data;
       if (!confirm(`Copia del ${new Date(j.exportado).toLocaleDateString('es-ES')}: ${d.vehicles?.length || 0} vehículos, ${d.mtos?.length || 0} mantenimientos, ${d.fuels?.length || 0} repostajes, ${d.casa?.length || 0} tareas.\n\nSe reemplazarán los datos actuales. ¿Continuar?`)) return;
       const keep = { ntfyTopic: D.settings.ntfyTopic, ntfyOn: D.settings.ntfyOn };
@@ -993,7 +993,7 @@ function exportCsv() {
   const head = rows.shift(); rows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
   const cell = v => { if (typeof v === 'number') v = String(v).replace('.', ','); v = String(v ?? ''); return /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
   const csv = '﻿' + [head, ...rows].map(r => r.map(cell).join(';')).join('\r\n');
-  shareOrDownload(new Blob([csv], { type: 'text/csv' }), `aldia-registros-${todayStr()}.csv`);
+  shareOrDownload(new Blob([csv], { type: 'text/csv' }), `migaraje-registros-${todayStr()}.csv`);
 }
 
 /* ================= Avisos (ntfy) ================= */
@@ -1004,7 +1004,7 @@ async function ntfyPost(body) {
 function ntfyMessage(ref) {
   const it = upcoming(ref).filter(i => i.st.level === 'red');
   if (!it.length) return null;
-  return { title: it.length === 1 ? `Al Día: ${it[0].title}` : `Al Día: ${it.length} cosas pendientes`, message: it.slice(0, 8).map(i => `• ${i.title} (${i.sub}): ${i.st.short || i.st.text}`).join('\n') + (it.length > 8 ? `\n…y ${it.length - 8} más` : '') };
+  return { title: it.length === 1 ? `Mi Garaje: ${it[0].title}` : `Mi Garaje: ${it.length} cosas pendientes`, message: it.slice(0, 8).map(i => `• ${i.title} (${i.sub}): ${i.st.short || i.st.text}`).join('\n') + (it.length > 8 ? `\n…y ${it.length - 8} más` : '') };
 }
 async function ntfySchedule() {
   const s = D.settings; if (!s.ntfyOn || !s.ntfyTopic || !navigator.onLine) return;
@@ -1076,13 +1076,13 @@ const A = {
   importFull: () => importFull(),
   exportCsv: () => exportCsv(),
   ntfyOn: () => {
-    const abc = 'abcdefghijkmnpqrstuvwxyz23456789'; let t = 'aldia-';
+    const abc = 'abcdefghijkmnpqrstuvwxyz23456789'; let t = 'migaraje-';
     crypto.getRandomValues(new Uint8Array(12)).forEach(b => t += abc[b % abc.length]);
     D.settings.ntfyTopic = D.settings.ntfyTopic || t; D.settings.ntfyOn = true; save(); render(); ntfySchedule();
   },
   ntfyOff: () => { D.settings.ntfyOn = false; save(); render(); },
   ntfyTest: async () => {
-    try { await ntfyPost({ title: 'Al Día', message: 'Aviso de prueba: ¡funciona! 👍', tags: ['white_check_mark'] }); toast('Aviso enviado'); }
+    try { await ntfyPost({ title: 'Mi Garaje', message: 'Aviso de prueba: ¡funciona! 👍', tags: ['white_check_mark'] }); toast('Aviso enviado'); }
     catch (e) { toast('No se pudo enviar: ' + e.message); }
   },
   wipe: async () => {
